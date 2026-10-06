@@ -47,3 +47,8 @@ export function layoutLabel(layout?: string) {
 
 export const ncbiRunUrl = (accession: string) => `https://www.ncbi.nlm.nih.gov/sra/${accession}`;
 export const enaRunUrl = (accession: string) => `https://www.ebi.ac.uk/ena/browser/view/${accession}`;
+
+/** "1 run", "2 runs"; numbers are locale-formatted. */
+export function plural(count: number, singular: string, pluralForm = `${singular}s`) {
+  return `${count.toLocaleString()} ${count === 1 ? singular : pluralForm}`;
+}

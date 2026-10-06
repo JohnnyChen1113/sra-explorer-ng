@@ -20,7 +20,7 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: 'createdAt', label: 'Created' },
 ];
 
-const GRID = 'grid grid-cols-[40px_minmax(240px,1fr)_150px_170px_110px_80px_150px_90px_100px] items-center gap-x-3';
+const GRID = 'grid grid-cols-[40px_minmax(240px,1fr)_220px_170px_110px_80px_150px_90px_100px] items-center gap-x-3';
 
 export function sortRuns(runs: RunSummary[], sort: SortState) {
   if (!sort) return runs;
@@ -53,7 +53,7 @@ export function RunTable({ runs, selected, saved, sort, onSort, onToggle, onTogg
 
   return (
     <div className="mt-4 overflow-x-auto rounded-2xl border border-[#dce6eb] bg-white shadow-[0_10px_30px_rgba(7,27,47,.05)]">
-      <div className="min-w-[1180px]">
+      <div className="min-w-[1250px]">
         <div role="row" className={`${GRID} border-b border-[#dce6eb] bg-[#f8fafb] px-4 py-2.5 text-[11px] font-extrabold uppercase tracking-[.08em] text-[#087f8c]`}>
           <button type="button" onClick={onToggleAll} disabled={!runs.length} className={`grid size-4 place-items-center rounded border transition disabled:opacity-40 ${allSelected || partiallySelected ? 'border-[#087f8c] bg-[#087f8c] text-white' : 'border-[#9ab0bc] bg-white'}`} title={allSelected ? 'Clear all visible results' : 'Select all visible results'} aria-label={allSelected ? 'Clear all visible results' : 'Select all visible results'} aria-checked={partiallySelected ? 'mixed' : allSelected} role="checkbox">{allSelected ? <Check className="size-3" /> : partiallySelected ? <span className="h-0.5 w-2 rounded bg-white" /> : null}</button>
           {COLUMNS.map((column) => {
@@ -86,9 +86,9 @@ export function RunTable({ runs, selected, saved, sort, onSort, onToggle, onTogg
                   {isSaved ? <span title="Already in collection" className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#c7f36b]/60 px-1.5 py-0.5 text-[10px] font-black uppercase text-[#2d4a00]"><Bookmark className="size-3" />Saved</span> : null}
                   <span className="truncate font-medium" title={run.title}>{run.title}</span>
                 </span>
-                <span className="flex items-center gap-1 font-mono text-[#087f8c]">
-                  <span>{run.accession}</span>
-                  <span className="flex opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+                <span className="flex min-w-0 items-center gap-1 overflow-hidden font-mono text-[#087f8c]">
+                  <span className="shrink-0">{run.accession}</span>
+                  <span className="flex shrink-0 items-center opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
                     <button type="button" title="Copy accession" aria-label={`Copy ${run.accession}`} onClick={() => void navigator.clipboard.writeText(run.accession).then(() => toast.success(`Copied ${run.accession}`))} className="rounded p-1 hover:bg-white"><Copy className="size-3" /></button>
                     <a href={ncbiRunUrl(run.accession)} target="_blank" rel="noopener" title="Open in NCBI SRA" className="rounded p-1 text-[10px] font-bold hover:bg-white">NCBI</a>
                     <a href={enaRunUrl(run.accession)} target="_blank" rel="noopener" title="Open in ENA" className="inline-flex items-center rounded p-1 text-[10px] font-bold hover:bg-white">ENA<ExternalLink className="ml-0.5 size-2.5" /></a>

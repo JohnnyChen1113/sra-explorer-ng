@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { browserSources } from './browser-sources';
 import { extractAccessions } from './core/sources';
 import { useCollectionFiles, type CollectionFilesState } from './file-cache';
-import { dedupeRuns, formatBases, formatBytes, layoutLabel, ncbiRunUrl, niceFilename } from './format';
+import { dedupeRuns, formatBases, formatBytes, layoutLabel, ncbiRunUrl, niceFilename, plural } from './format';
 import { buildDownloadScript, buildFetchngsIds, buildManifest, buildMetadataRows, buildNfcoreSamplesheet, buildUrlList, FETCHNGS_COMMAND, methodsFor, representationLabels, serializeMetadata, toolCommands, type DownloadMethod, type MetadataFormat } from './scripts';
 import type { DownloadFile, RunSummary } from './types';
 
@@ -94,7 +94,7 @@ export function CollectionWorkspace({ open, expanded, runs, onClose, onToggleSiz
   return <div className="fixed inset-0 z-50 bg-[#04121f]/45 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <aside role="dialog" aria-modal="true" aria-label="Collection" className={`absolute inset-y-0 right-0 flex flex-col bg-[#f2f6f8] shadow-[-30px_0_80px_rgba(4,18,31,.25)] transition-[width] duration-200 ${expanded ? 'w-[80vw]' : 'w-[52vw]'} max-lg:w-full`}>
       <header className="flex h-16 shrink-0 items-center gap-2 border-b border-[#dce6eb] bg-white px-5">
-        <div><div className="text-lg font-black tracking-[-.03em]">Collection</div><div className="text-xs text-[#607286]">{runs.length} runs · {formatBases(runs.reduce((sum, run) => sum + (run.totalBases || 0), 0))}</div></div>
+        <div><div className="text-lg font-black tracking-[-.03em]">Collection</div><div className="text-xs text-[#607286]">{plural(runs.length, 'run')} · {formatBases(runs.reduce((sum, run) => sum + (run.totalBases || 0), 0))}</div></div>
         <div className="ml-auto flex items-center gap-1.5">
           <input ref={importRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importCollection(file); event.target.value = ''; }} />
           <button onClick={() => importRef.current?.click()} className="rounded-lg border border-[#dce6eb] p-2 hover:bg-[#f2f6f8]" title="Import collection JSON" aria-label="Import collection JSON"><ArrowUpFromLine className="size-4" /></button>
@@ -105,8 +105,8 @@ export function CollectionWorkspace({ open, expanded, runs, onClose, onToggleSiz
         </div>
       </header>
       {runs.length ? <>
-        <nav className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[#dce6eb] bg-[#f8fafb] px-5 py-2">
-          {tabs.map(([value, label, count]) => <button key={value} onClick={() => setTab(value)} className={`rounded-lg px-3 py-1.5 text-sm font-bold ${tab === value ? 'bg-[#071b2f] text-white' : 'text-[#405563] hover:bg-white'}`}>{label}{count !== null ? <span className={`ml-1.5 rounded-full px-1.5 text-[11px] ${tab === value ? 'bg-white/20' : 'bg-[#e3eaee]'}`}>{count}</span> : null}</button>)}
+        <nav className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-[#dce6eb] bg-[#f8fafb] px-5 py-2">
+          {tabs.map(([value, label, count]) => <button key={value} onClick={() => setTab(value)} className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-bold ${tab === value ? 'bg-[#071b2f] text-white' : 'text-[#405563] hover:bg-white'}`}>{label}{count !== null ? <span className={`ml-1.5 rounded-full px-1.5 text-[11px] ${tab === value ? 'bg-white/20' : 'bg-[#e3eaee]'}`}>{count}</span> : null}</button>)}
         </nav>
         <LookupStatus state={state} total={runs.length} showErrors={tab === 'runs' || tab === 'metadata' || tab === 'tools'} />
         <div className="min-h-0 flex-1 overflow-y-auto p-5 lg:p-7">
@@ -188,8 +188,9 @@ function CollectionRuns({ runs, state, onRemove, onCheckOriginal }: { runs: RunS
 
 function BulkFileDownloads({ representation, files, runs, complete, failed, onRecheck, onRetry }: { representation: DownloadFile['representation']; files: DownloadFile[]; runs: RunSummary[]; complete: boolean; failed: Set<string>; onRecheck: (accessions: string[]) => void; onRetry: () => void }) {
   const methods = methodsFor(representation);
-  const [rename, setRename] = useState(representation !== 'original');
-  const [verifyMd5, setVerifyMd5] = useState(true);
+  // Both options are off by default so the generated script stays a plain list of downloads.
+  const [rename, setRename] = useState(false);
+  const [verifyMd5, setVerifyMd5] = useState(false);
   const [method, setMethod] = useState<DownloadMethod>('curl');
   const [showManifest, setShowManifest] = useState(false);
   const labels = representationLabels[representation];
@@ -203,15 +204,18 @@ function BulkFileDownloads({ representation, files, runs, complete, failed, onRe
   const missingSizes = selectedFiles.filter((file) => !file.size).length;
   const withoutFiles = complete && representation === 'fastq' ? runs.filter((run) => !failed.has(run.accession) && !selectedFiles.some((file) => file.accession === run.accession)).map((run) => run.accession) : [];
 
-  const methodNote: Partial<Record<DownloadMethod, string>> = {
-    aspera: 'Aspera (ascp) is usually much faster than HTTPS for ENA FASTQ. Install IBM Aspera Connect or the ascp CLI; set ASPERA_KEY if your key lives elsewhere.',
-    'fastq-dl': 'fastq-dl downloads with archive filenames; the script verifies MD5 and then renames each file.',
-    kingfisher: "Kingfisher downloads into each run's BioProject folder; the script then locates, verifies, and renames each file.",
+  const toolInfo: Record<DownloadMethod, string> = {
+    curl: 'Preinstalled on Linux and macOS. Resumes interrupted downloads.',
+    axel: 'Opens 8 connections per file, often faster on slow links. Requires axel.',
+    aspera: 'Usually the fastest option for ENA FASTQ. Requires IBM Aspera Connect or the ascp CLI; set ASPERA_KEY if your key lives elsewhere.',
+    'fastq-dl': 'Downloads each run with fastq-dl (ENA first, SRA as fallback). Requires fastq-dl.',
+    kingfisher: "Picks the fastest available source per run and saves into each run's BioProject folder. Requires Kingfisher.",
   };
+  const renameExample = selectedFiles[0] ? `${selectedFiles[0].filename} → ${niceFilename(selectedFiles[0], byAccession)}` : '';
 
   return <div className="space-y-4">
     <div className={`rounded-2xl border p-4 text-sm ${representation === 'original' ? 'border-[#efd998] bg-[#fff4cf] text-[#72530a]' : 'border-[#b9dddd] bg-[#e8f6f5] text-[#07535b]'}`}>
-      <strong>{selectedFiles.length} {labels.title} files</strong> from {runsWithFiles} of {runs.length} runs · {totalSize ? formatBytes(totalSize) : 'size unknown'}{missingSizes && totalSize ? ` (+${missingSizes} without size)` : ''}.
+      <strong>{plural(selectedFiles.length, `${labels.title} file`)}</strong> from {runsWithFiles} of {plural(runs.length, 'run')} · {totalSize ? formatBytes(totalSize) : 'size unknown'}{missingSizes && totalSize ? ` (+${missingSizes} without size)` : ''}.
       {representation === 'original' ? ' Original files are whatever the submitter uploaded (FAST5, POD5, BAM, …) and can be very large.' : ''}
       {!complete ? ' Lookups still running; this list will grow.' : ''}
     </div>
@@ -225,28 +229,45 @@ function BulkFileDownloads({ representation, files, runs, complete, failed, onRe
       <button onClick={() => onRecheck(withoutFiles)} className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 font-bold"><RotateCw className="size-3" /> Re-check</button>
     </div> : null}
     {selectedFiles.length ? <>
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#dce6eb] bg-white p-3">
-        <span className="mr-1 text-xs font-bold uppercase tracking-wider text-[#607286]">Tool</span>
-        {methods.map((value) => <button key={value} onClick={() => setMethod(value)} className={`rounded-lg px-3 py-1.5 text-xs font-black ${method === value ? 'bg-[#071b2f] text-white' : 'bg-[#f2f6f8] text-[#405563] hover:bg-[#e3eaee]'}`}>{value}</button>)}
-        <label className="ml-auto inline-flex cursor-pointer items-center gap-1.5 text-xs font-bold text-[#405563]"><input type="checkbox" checked={verifyMd5} onChange={(event) => setVerifyMd5(event.target.checked)} className="accent-[#087f8c]" /> Verify MD5</label>
-        <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-bold text-[#405563]"><input type="checkbox" checked={rename} onChange={(event) => setRename(event.target.checked)} className="accent-[#087f8c]" /> Rename with sample title</label>
-      </div>
-      {methodNote[method] ? <p className="text-xs text-[#607286]">{methodNote[method]}</p> : null}
-      <div className="flex flex-wrap gap-2">
-        <button onClick={() => downloadText(`download-${labels.stem}.sh`, script)} className={primaryButton}><ArrowDownToLine className="size-4" /> Download script</button>
-        <button onClick={() => void copyText('Script', script)} className={button}><Clipboard className="size-4" /> Copy script</button>
-        <button onClick={() => void copyText('URLs', urls)} className={button}><Clipboard className="size-4" /> Copy URLs</button>
-        <button onClick={() => downloadText(`${labels.stem}.urls.txt`, urls)} className={button}><FileDown className="size-4" /> URLs.txt</button>
-        <button onClick={() => setShowManifest((value) => !value)} className={`${button} ${showManifest ? 'border-[#087f8c] bg-[#e0f4f4]' : ''}`}><FileDown className="size-4" /> Manifest TSV</button>
-        {representation === 'fastq' ? <button onClick={() => {
-          const { csv, skipped } = buildNfcoreSamplesheet(runs, files);
-          downloadText('samplesheet.csv', csv, 'text/csv;charset=utf-8');
-          if (skipped.length) toast.warning(`${skipped.length} runs without a usable FASTQ pair were left out`, { description: skipped.slice(0, 8).join(', ') + (skipped.length > 8 ? '…' : '') });
-        }} className={button} title="sample,fastq_1,fastq_2,strandedness with ENA URLs, for nf-core/rnaseq and similar pipelines"><FileDown className="size-4" /> nf-core samplesheet</button> : null}
-      </div>
-      <p className="text-xs text-[#607286]">Run with <code className="rounded bg-white px-1">bash download-{labels.stem}.sh</code>. Works on Linux and macOS.</p>
-      {showManifest ? <section className="overflow-hidden rounded-2xl border border-[#dce6eb] bg-white"><div className="flex flex-wrap items-center gap-2 border-b border-[#dce6eb] px-4 py-3"><strong className="text-sm">Manifest TSV</strong><button onClick={() => void copyText('Manifest', manifest)} className={`ml-auto ${button}`}><Clipboard className="size-4" /> Copy</button><button onClick={() => downloadText(`${labels.stem}.tsv`, manifest, 'text/tab-separated-values;charset=utf-8')} className={primaryButton}><ArrowDownToLine className="size-4" /> Download</button></div><pre className={`max-h-[300px] rounded-none ${codeBlock}`}><code>{manifest}</code></pre></section> : null}
+      <section className="overflow-hidden rounded-2xl border border-[#dce6eb] bg-white">
+        <div className="p-4">
+          <StepTitle step={1}>Download tool</StepTitle>
+          <div className="mt-2.5 flex flex-wrap gap-1.5" role="group" aria-label="Download tool">
+            {methods.map((value) => <button key={value} onClick={() => setMethod(value)} aria-pressed={method === value} className={`rounded-lg border px-3 py-1.5 text-xs font-black transition ${method === value ? 'border-[#071b2f] bg-[#071b2f] text-white' : 'border-[#dce6eb] bg-white text-[#405563] hover:border-[#087f8c]'}`}>{value}</button>)}
+          </div>
+          <p className="mt-2 text-xs leading-5 text-[#607286]">{toolInfo[method]}</p>
+        </div>
+        <div className="border-t border-[#edf2f4] p-4">
+          <StepTitle step={2}>Options <span className="font-semibold normal-case tracking-normal text-[#9ab0bc]">— optional, both add lines to the script</span></StepTitle>
+          <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
+            <OptionToggle checked={verifyMd5} onChange={setVerifyMd5} label="Verify MD5 checksums" hint="Checks every file against the archive's checksum after it downloads." />
+            <OptionToggle checked={rename} onChange={setRename} label="Rename with sample title" hint={renameExample ? `e.g. ${renameExample}` : 'Adds the sample title to each filename.'} />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 border-t border-[#edf2f4] bg-[#f8fafb] p-4">
+          <StepTitle step={3}>Get the script</StepTitle>
+          <div className="flex w-full flex-wrap items-center gap-2">
+            <button onClick={() => downloadText(`download-${labels.stem}.sh`, script)} className={primaryButton}><ArrowDownToLine className="size-4" /> Download script</button>
+            <button onClick={() => void copyText('Script', script)} className={button}><Clipboard className="size-4" /> Copy script</button>
+            <span className="text-xs text-[#607286]">Then run <code className="rounded bg-white px-1">bash download-{labels.stem}.sh</code> (Linux or macOS).</span>
+          </div>
+        </div>
+      </section>
       <pre className={`max-h-[360px] ${codeBlock}`}><code>{script}</code></pre>
+      <section className="rounded-2xl border border-[#dce6eb] bg-white p-4">
+        <div className="text-xs font-black uppercase tracking-wider text-[#607286]">Other formats</div>
+        <div className="mt-2.5 flex flex-wrap gap-2">
+          <button onClick={() => void copyText('URLs', urls)} className={button}><Clipboard className="size-4" /> Copy URL list</button>
+          <button onClick={() => downloadText(`${labels.stem}.urls.txt`, urls)} className={button}><FileDown className="size-4" /> URLs.txt</button>
+          <button onClick={() => setShowManifest((value) => !value)} aria-expanded={showManifest} className={`${button} ${showManifest ? 'border-[#087f8c] bg-[#e0f4f4]' : ''}`}><FileDown className="size-4" /> Manifest TSV</button>
+          {representation === 'fastq' ? <button onClick={() => {
+            const { csv, skipped } = buildNfcoreSamplesheet(runs, files);
+            downloadText('samplesheet.csv', csv, 'text/csv;charset=utf-8');
+            if (skipped.length) toast.warning(`${skipped.length} runs without a usable FASTQ pair were left out`, { description: skipped.slice(0, 8).join(', ') + (skipped.length > 8 ? '…' : '') });
+          }} className={button} title="sample,fastq_1,fastq_2,strandedness with ENA URLs, for nf-core/rnaseq and similar pipelines"><FileDown className="size-4" /> nf-core samplesheet</button> : null}
+        </div>
+        {showManifest ? <div className="mt-3 overflow-hidden rounded-xl border border-[#dce6eb]"><div className="flex flex-wrap items-center gap-2 border-b border-[#dce6eb] px-3 py-2"><span className="text-xs text-[#607286]">accession, filename, size, MD5 and URL for every file</span><button onClick={() => void copyText('Manifest', manifest)} className={`ml-auto ${button}`}><Clipboard className="size-4" /> Copy</button><button onClick={() => downloadText(`${labels.stem}.tsv`, manifest, 'text/tab-separated-values;charset=utf-8')} className={primaryButton}><ArrowDownToLine className="size-4" /> Download</button></div><pre className={`max-h-[300px] rounded-none ${codeBlock}`}><code>{manifest}</code></pre></div> : null}
+      </section>
       <details className="overflow-hidden rounded-2xl border border-[#dce6eb] bg-white">
         <summary className="cursor-pointer px-4 py-3 text-sm font-bold">File list ({selectedFiles.length})</summary>
         {selectedFiles.slice(0, 2000).map((file) => <div key={`${file.accession}-${file.url}`} className="grid gap-1 border-t border-[#edf2f4] px-4 py-2.5 text-xs sm:grid-cols-[120px_1fr_auto]"><span className="font-mono font-bold text-[#087f8c]">{file.accession}</span><span className="min-w-0 break-all font-semibold">{rename ? niceFilename(file, byAccession) : file.filename}<span className="ml-2 font-normal text-[#607286]">{file.md5 ? `MD5 ${file.md5}` : 'No MD5'}</span></span><span className="text-[#607286]">{formatBytes(file.size)}</span></div>)}
@@ -329,4 +350,15 @@ function AddAccessions({ onAdd, collapsible, state: [paste, setPaste] }: { onAdd
       {message ? <span className={`text-xs ${message.tone === 'error' ? 'text-red-700' : message.tone === 'warn' ? 'text-[#9a5b00]' : 'text-[#07535b]'}`}>{message.text}</span> : null}
     </div>
   </section>;
+}
+
+function StepTitle({ step, children }: { step: number; children: React.ReactNode }) {
+  return <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[#071b2f]"><span className="grid size-5 place-items-center rounded-full bg-[#071b2f] text-[10px] text-white">{step}</span>{children}</div>;
+}
+
+function OptionToggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (value: boolean) => void; label: string; hint: string }) {
+  return <label className={`flex cursor-pointer items-start gap-2.5 rounded-xl border p-3 transition ${checked ? 'border-[#087f8c] bg-[#e8f6f5]' : 'border-[#dce6eb] hover:border-[#9ab0bc]'}`}>
+    <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-0.5 accent-[#087f8c]" />
+    <span className="min-w-0"><span className="block text-sm font-bold text-[#071b2f]">{label}</span><span className="block text-xs leading-5 text-[#607286] [overflow-wrap:anywhere]">{hint}</span></span>
+  </label>;
 }

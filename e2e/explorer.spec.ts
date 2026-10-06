@@ -69,6 +69,8 @@ test('collection looks up ENA first and NCBI Original files only on demand', asy
   await expect(dialog.getByText('10 FASTQ files', { exact: true })).toBeVisible();
   expect(new Set(api.enaRequests).size).toBe(6);
   expect(api.fileRequests).toHaveLength(0);
+  await expect(dialog.locator('pre').first()).not.toContainText('md5_check');
+  await dialog.getByLabel(/Verify MD5 checksums/).check();
   await expect(dialog.locator('pre').first()).toContainText("md5_check 'md50_1'");
   await dialog.getByRole('button', { name: 'aspera' }).click();
   await expect(dialog.locator('pre').first()).toContainText('era-fasp@fasp.sra.ebi.ac.uk:/vol1/fastq/SRR100/SRR100000/SRR100000_1.fastq.gz');
@@ -88,7 +90,7 @@ test('failed Original lookups are reported and can be retried', async ({ page })
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: /^Original files/ }).click();
   await expect(dialog.getByText('1 runs could not be checked')).toBeVisible();
-  await expect(dialog.getByText('1 Original submitted files', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('1 Original submitted file', { exact: true })).toBeVisible();
   api.healOriginal();
   await dialog.getByRole('button', { name: 'Retry' }).click();
   await expect(dialog.getByText('2 Original submitted files', { exact: true })).toBeVisible();

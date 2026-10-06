@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CollectionWorkspace } from './collection';
 import { useCollection } from './use-collection';
 import { browserSources } from './browser-sources';
-import { dedupeRuns, layoutLabel } from './format';
+import { dedupeRuns, layoutLabel, plural } from './format';
 import { RunTable, sortRuns, type SortKey, type SortState } from './run-table';
 import type { RunSummary, SearchCursor } from './types';
 
@@ -185,7 +185,7 @@ export function ExplorerPage() {
               <div className="min-w-0">
                 <div className="text-xl font-black tracking-[-.03em]">
                   {loading && !runs.length ? <span className="inline-flex items-center gap-2"><LoaderCircle className="size-5 animate-spin text-[#087f8c]" /> Searching NCBI SRA…</span>
-                    : <>{runs.length.toLocaleString()} runs <span className="font-semibold text-[#607286]">from {loaded.toLocaleString()} of {total.toLocaleString()} SRA records</span></>}
+                    : <>{plural(runs.length, 'run')} <span className="font-semibold text-[#607286]">from {loaded.toLocaleString()} of {plural(total, 'SRA record')}</span></>}
                 </div>
                 {translatedQuery && translatedQuery !== activeQuery ? <div className="mt-0.5 truncate text-xs text-[#607286]" title={translatedQuery}>NCBI query: <code>{translatedQuery}</code></div> : null}
               </div>
@@ -217,7 +217,7 @@ export function ExplorerPage() {
 
             {runs.length ? <div className="flex items-center justify-center py-6">
               {cursor ? <button disabled={loading} onClick={() => void runSearch(activeQuery, cursor)} className="inline-flex items-center gap-2 rounded-xl border border-[#bdd0d8] bg-white px-5 py-3 font-bold shadow-sm hover:border-[#087f8c] disabled:opacity-50">{loading ? <LoaderCircle className="size-4 animate-spin" /> : <ChevronDown className="size-4" />} Load next {Math.min(500, total - loaded).toLocaleString()} records <span className="font-normal text-[#607286]">({(total - loaded).toLocaleString()} remaining)</span></button>
-                : <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#087f8c]"><Check className="size-4" /> All {total.toLocaleString()} records loaded</div>}
+                : <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#087f8c]"><Check className="size-4" /> {total === 1 ? 'The only record is loaded' : `All ${total.toLocaleString()} records loaded`}</div>}
             </div> : null}
           </section>
         ) : null}
