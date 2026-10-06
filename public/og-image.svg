@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#071b2f"/><stop offset="1" stop-color="#087f8c"/></linearGradient></defs>
+  <rect width="1200" height="630" rx="48" fill="url(#g)"/>
+  <g transform="translate(82 92) scale(2.1)">
+    <rect width="64" height="64" rx="15" fill="#071b2f" stroke="#ffffff" stroke-opacity=".16"/>
+    <path d="M18 15c18 0 28 10 28 20S36 53 18 53M46 15C28 15 18 25 18 35s10 18 28 18" fill="none" stroke="#2bb9b4" stroke-width="5" stroke-linecap="round"/>
+    <path d="M23 21h18M19 31h26M19 41h26M23 49h18" stroke="#c7f36b" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <text x="82" y="350" fill="#fff" font-family="Inter,Arial,sans-serif" font-size="74" font-weight="800">SRA Explorer NG</text>
+  <text x="86" y="420" fill="#c7f36b" font-family="Inter,Arial,sans-serif" font-size="30" font-weight="700">FASTQ · SRA · ORIGINAL SUBMITTED FILES</text>
+  <text x="86" y="486" fill="#d9e8ef" font-family="Inter,Arial,sans-serif" font-size="27">Search NCBI SRA. Recover raw signal. Download in batches.</text>
+  <text x="86" y="548" fill="#9fd7dc" font-family="Inter,Arial,sans-serif" font-size="23">sra.ai2paper.com</text>
+</svg>

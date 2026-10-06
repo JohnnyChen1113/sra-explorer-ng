@@ -1,0 +1,27 @@
+# SRA Explorer NG
+
+> SRA Explorer NG is an open-source web application for searching NCBI Sequence Read Archive records and generating reproducible batch-download commands.
+
+Canonical URL: https://sra.ai2paper.com/
+Documentation: https://sra.ai2paper.com/docs
+OpenAPI: https://sra.ai2paper.com/api/v1/openapi.json
+Remote MCP endpoint: https://sra.ai2paper.com/mcp
+License: GNU GPL v2
+Maintainer: Junhao Chen
+
+## Capabilities
+
+- Search NCBI SRA accessions, studies, projects, and text terms in explicit batches of 500 NCBI records.
+- Retrieve ENA FASTQ, normalized SRA, and NCBI Original submitted files.
+- Preserve instrument-native submissions such as Oxford Nanopore FAST5/POD5 when submitters deposited them.
+- Generate collection-level curl, axel, fastq-dl, Kingfisher, AWS CLI, MD5 verification, rename, and project-directory commands.
+- Export sample-level TSV, JSON, YAML, URL manifests, and Bash scripts.
+- Expose read-only JSON API and MCP tools for software agents.
+
+## Data provenance
+
+Search metadata comes from NCBI E-utilities. Original submitted file metadata comes from the NCBI Run Browser. FASTQ metadata comes from the ENA Portal API. Availability and file formats depend on the original submitter and archive.
+
+## Important distinction
+
+FASTQ and normalized SRA are not substitutes for instrument-native signal data. For analyses that require raw Nanopore signal, use Original submitted FAST5 or POD5 files when available.
