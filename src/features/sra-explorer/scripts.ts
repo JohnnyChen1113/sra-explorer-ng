@@ -177,3 +177,28 @@ export const toolCommands = [
   { name: 'SRA Toolkit', href: 'https://github.com/ncbi/sra-tools', capabilities: 'SRA · FASTQ conversion', command: (acc: string) => `prefetch ${acc}\nfasterq-dump --split-files --include-technical ${acc}` },
   { name: 'enaBrowserTools', href: 'https://github.com/enasequence/enaBrowserTools', capabilities: 'ENA submitted · FASTQ · SRA', command: (acc: string) => `enaDataGet -f submitted ${acc}` },
 ];
+
+/** nf-core/fetchngs input: one accession per line. */
+export function buildFetchngsIds(runs: RunSummary[]) {
+  return runs.map((run) => run.accession).join('\n') + (runs.length ? '\n' : '');
+}
+
+export const FETCHNGS_COMMAND = 'nextflow run nf-core/fetchngs -profile docker --input ids.csv --outdir fetchngs-results';
+
+/**
+ * nf-core samplesheet (rnaseq/sarek style) pointing straight at ENA FASTQ URLs.
+ * ENA sometimes adds an unpaired `<run>.fastq.gz` next to `_1`/`_2`; only the pairs are used then.
+ */
+export function buildNfcoreSamplesheet(runs: RunSummary[], files: DownloadFile[]) {
+  const rows = ['sample,fastq_1,fastq_2,strandedness'];
+  const skipped: string[] = [];
+  runs.forEach((run) => {
+    const fastq = files.filter((file) => file.accession === run.accession && file.representation === 'fastq');
+    const read1 = fastq.find((file) => /_1\.f(ast)?q(\.gz)?$/.test(file.filename));
+    const read2 = fastq.find((file) => /_2\.f(ast)?q(\.gz)?$/.test(file.filename));
+    if (read1 && read2) rows.push(`${run.accession},${read1.url},${read2.url},auto`);
+    else if (fastq.length === 1) rows.push(`${run.accession},${fastq[0].url},,auto`);
+    else skipped.push(run.accession);
+  });
+  return { csv: rows.join('\n') + '\n', skipped };
+}

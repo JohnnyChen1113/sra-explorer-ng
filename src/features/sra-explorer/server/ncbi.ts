@@ -20,15 +20,18 @@ function decodeCursor(value: string): SearchCursor {
   }
 }
 
-async function ncbiJson(path: string, params: Record<string, string>) {
+async function ncbiJson(path: string, params: Record<string, string>, method: 'GET' | 'POST' = 'GET') {
   const url = new URL(path, EUTILS);
   const apiKey = ncbiApiKey();
-  Object.entries({ ...params, retmode: 'json', tool: 'sra_explorer_ng', ...(apiKey ? { api_key: apiKey } : {}) }).forEach(([key, value]) =>
-    url.searchParams.set(key, value),
-  );
+  const query = new URLSearchParams({ ...params, retmode: 'json', tool: 'sra_explorer_ng', ...(apiKey ? { api_key: apiKey } : {}) });
+  // Long terms (accession lists) must be POSTed; E-utilities rejects very long URLs.
+  if (method === 'GET') url.search = query.toString();
+  const init: RequestInit = method === 'GET'
+    ? { headers: { accept: 'application/json' } }
+    : { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' }, body: query.toString() };
   let response: Response;
   try {
-    response = await upstreamFetch('eutils', url, { headers: { accept: 'application/json' } }, 'NCBI E-utilities');
+    response = await upstreamFetch('eutils', url, init, 'NCBI E-utilities');
   } catch (error) {
     throw new Response(error instanceof UpstreamError ? `${error.message}. NCBI may be busy; try again shortly.` : 'NCBI request failed.', { status: 502 });
   }
@@ -124,4 +127,34 @@ export async function searchSra(query: string, cursorValue?: string | null): Pro
     nextCursor: nextStart < cursor.total ? encodeCursor({ ...cursor, nextStart }) : null,
     source: 'NCBI E-utilities',
   };
+}
+
+export const MAX_LOOKUP_ACCESSIONS = 500;
+export const MAX_LOOKUP_RUNS = 5000;
+const ACCESSION_PATTERN = /\b(?:[SED]R[RXSP]\d{5,}|PRJ[DEN][AB]\d+|SAM[NED][A-Z]?\d+|GS[EM]\d+)\b/gi;
+
+export function extractAccessions(text: string) {
+  return [...new Set((text.match(ACCESSION_PATTERN) || []).map((item) => item.toUpperCase()))];
+}
+
+export type AccessionLookup = { runs: RunSummary[]; unmatched: string[]; truncated: boolean; total: number };
+
+/** Resolve run, experiment, study, BioProject, BioSample, or GEO accessions to their SRA runs. */
+export async function lookupAccessions(accessions: string[]): Promise<AccessionLookup> {
+  const unique = [...new Set(accessions.map((item) => item.trim().toUpperCase()).filter(Boolean))];
+  if (!unique.length) throw new Response('Provide at least one accession.', { status: 400 });
+  if (unique.length > MAX_LOOKUP_ACCESSIONS) throw new Response(`Provide at most ${MAX_LOOKUP_ACCESSIONS} accessions per request.`, { status: 400 });
+
+  const search = await ncbiJson('esearch.fcgi', { db: 'sra', usehistory: 'y', retmax: '0', term: unique.join(' OR ') }, 'POST');
+  const total = Number(search.esearchresult?.count) || 0;
+  const runs: RunSummary[] = [];
+  for (let start = 0; start < total && runs.length < MAX_LOOKUP_RUNS; start += BATCH_SIZE) {
+    const summary = await ncbiJson('esummary.fcgi', { db: 'sra', query_key: search.esearchresult.querykey, WebEnv: search.esearchresult.webenv, retstart: String(start), retmax: String(BATCH_SIZE) });
+    runs.push(...parseSummaryResponse(summary));
+  }
+  const seen = new Map(runs.map((run) => [run.accession, run]));
+  // GEO accessions are not stored on SRA records, so they cannot be checked individually.
+  const known = new Set([...seen.values()].flatMap((run) => [run.accession, run.experiment, run.study, run.project, run.biosample]).filter(Boolean));
+  const unmatched = unique.filter((item) => !item.startsWith('GS') && !item.startsWith('SAM') && !known.has(item));
+  return { runs: [...seen.values()].slice(0, MAX_LOOKUP_RUNS), unmatched, truncated: runs.length >= MAX_LOOKUP_RUNS && total > BATCH_SIZE, total };
 }

@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 
 import { enforceAccess, optionsResponse, withAccessHeaders } from '@/features/sra-explorer/server/access';
 import { getRunFiles } from '@/features/sra-explorer/server/files';
-import { searchSra } from '@/features/sra-explorer/server/ncbi';
+import { extractAccessions, lookupAccessions, searchSra } from '@/features/sra-explorer/server/ncbi';
 import { shellQuote } from '@/features/sra-explorer/format';
 
 const protocolVersion = '2025-06-18';
@@ -18,6 +18,7 @@ function rpcError(id: unknown, code: number, message: string) {
 const tools = [
   { name: 'search_sra', description: 'Search NCBI SRA and return the first batch of up to 500 records.', inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
   { name: 'load_more_results', description: 'Load the next batch from a search_sra cursor.', inputSchema: { type: 'object', properties: { cursor: { type: 'string' } }, required: ['cursor'] } },
+  { name: 'lookup_accessions', description: 'Resolve a list (or free text) of SRR/ERR/DRR, SRX, SRP, PRJNA/PRJEB, SAMN, GSE or GSM accessions to their SRA runs with metadata. Up to 500 accessions; reports accessions that were not found.', inputSchema: { type: 'object', properties: { text: { type: 'string', description: 'Accessions separated by any whitespace or punctuation.' } }, required: ['text'] } },
   { name: 'get_run_files', description: 'List Original submitted, FASTQ, and normalized SRA files for a run.', inputSchema: { type: 'object', properties: { accession: { type: 'string' } }, required: ['accession'] } },
   { name: 'create_download_manifest', description: 'Create direct URLs and shell commands for all representations of one run.', inputSchema: { type: 'object', properties: { accession: { type: 'string' } }, required: ['accession'] } },
 ];
@@ -25,6 +26,7 @@ const tools = [
 async function callTool(name: string, args: Record<string, string>) {
   if (name === 'search_sra') return searchSra(args.query || '');
   if (name === 'load_more_results') return searchSra('', args.cursor);
+  if (name === 'lookup_accessions') return lookupAccessions(extractAccessions(args.text || ''));
   if (name === 'get_run_files') return getRunFiles(args.accession || '');
   if (name === 'create_download_manifest') {
     const result = await getRunFiles(args.accession || '');
@@ -39,7 +41,7 @@ export const Route = createFileRoute('/mcp')({
       GET: async ({ request }) => Response.redirect(new URL('/docs#mcp', request.url), 302),
       POST: async ({ request }) => {
         try {
-          const access = enforceAccess(request);
+          const access = await enforceAccess(request);
           const message = (await request.json()) as any;
           let response: Response;
           if (message.method === 'initialize') {

@@ -50,6 +50,8 @@ export type RunFilesResponse = {
   files: DownloadFile[];
   sources: string[];
   project?: string;
+  /** Which lookups this response covers: ENA (FASTQ + SRA) and/or NCBI Original files. */
+  checked?: Array<'ena' | 'original'>;
   /** Upstream lookups that failed; an empty file list is only trustworthy when this is empty. */
   errors?: string[];
   error?: string;

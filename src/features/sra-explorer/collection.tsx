@@ -1,10 +1,10 @@
-import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Clipboard, FileDown, Github, LoaderCircle, Maximize2, Minimize2, RotateCw, ShoppingBasket, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Clipboard, ClipboardPaste, FileDown, Github, LoaderCircle, Maximize2, Minimize2, RotateCw, ShoppingBasket, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
-import { useCollectionFiles, type CollectionFilesState } from './file-cache';
-import { formatBases, formatBytes, layoutLabel, ncbiRunUrl, niceFilename } from './format';
-import { buildDownloadScript, buildManifest, buildMetadataRows, buildUrlList, methodsFor, representationLabels, serializeMetadata, toolCommands, type DownloadMethod, type MetadataFormat } from './scripts';
+import { readError, useCollectionFiles, type CollectionFilesState } from './file-cache';
+import { dedupeRuns, formatBases, formatBytes, layoutLabel, ncbiRunUrl, niceFilename } from './format';
+import { buildDownloadScript, buildFetchngsIds, buildManifest, buildMetadataRows, buildNfcoreSamplesheet, buildUrlList, FETCHNGS_COMMAND, methodsFor, representationLabels, serializeMetadata, toolCommands, type DownloadMethod, type MetadataFormat } from './scripts';
 import type { DownloadFile, RunSummary } from './types';
 
 type Tab = 'runs' | 'fastq' | 'sra' | 'original' | 'metadata' | 'tools';
@@ -37,7 +37,12 @@ const codeBlock = 'overflow-auto rounded-2xl bg-[#0c2538] p-4 text-xs leading-5 
 
 export function CollectionWorkspace({ open, expanded, runs, onClose, onToggleSize, onReplace, onRemove }: Props) {
   const [tab, setTab] = useState<Tab>('runs');
-  const state = useCollectionFiles(runs, open);
+  const [wantOriginal, setWantOriginal] = useState(false);
+  // Lives here so the paste form keeps its text and result when the panel switches from empty to populated.
+  const paste = useState<PasteState>({ text: '', message: null });
+  const state = useCollectionFiles(runs, open, wantOriginal);
+
+  useEffect(() => { if (tab === 'original') setWantOriginal(true); }, [tab]);
   const importRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -79,7 +84,7 @@ export function CollectionWorkspace({ open, expanded, runs, onClose, onToggleSiz
     ['runs', 'Runs', runs.length],
     ['fastq', 'FASTQ', counts.fastq],
     ['sra', 'SRA', counts.sra],
-    ['original', 'Original files', counts.original],
+    ['original', 'Original files', wantOriginal ? counts.original : null],
     ['metadata', 'Metadata', null],
     ['tools', 'Download tools', null],
   ];
@@ -103,53 +108,62 @@ export function CollectionWorkspace({ open, expanded, runs, onClose, onToggleSiz
         </nav>
         <LookupStatus state={state} total={runs.length} />
         <div className="min-h-0 flex-1 overflow-y-auto p-5 lg:p-7">
-          {tab === 'runs' ? <CollectionRuns runs={runs} state={state} onRemove={(accession) => {
+          {tab === 'runs' ? <AddAccessions collapsible state={paste} onAdd={(added) => onReplace(dedupeRuns(runs, added))} /> : null}
+          {tab === 'runs' ? <CollectionRuns runs={runs} state={state} onCheckOriginal={() => setWantOriginal(true)} onRemove={(accession) => {
             const run = runs.find((item) => item.accession === accession);
             onRemove(accession);
             if (run) toast(`Removed ${accession}`, { action: { label: 'Undo', onClick: () => onReplace([...runs]) } });
           }} />
-            : tab === 'metadata' ? <FullMetadata runs={runs} files={state.files} />
+            : tab === 'metadata' ? <FullMetadata runs={runs} files={state.files} originalsChecked={wantOriginal && state.lookups.original.done === runs.length} onCheckOriginal={() => setWantOriginal(true)} />
             : tab === 'tools' ? <BulkToolDetails runs={runs} />
-            : <BulkFileDownloads key={tab} representation={tab} files={state.files} runs={runs} complete={!state.pending && !state.loading} />}
+            : <BulkFileDownloads key={tab} representation={tab} files={state.files} runs={runs} onRecheck={(accessions) => state.recheck(tab === 'original' ? 'original' : 'ena', accessions)} complete={(() => { const lookup = state.lookups[tab === 'original' ? 'original' : 'ena']; return lookup.done === runs.length && !lookup.loading; })()} />}
         </div>
-      </> : <div className="grid flex-1 place-items-center text-center"><div><ShoppingBasket className="mx-auto size-10 text-[#9ab0bc]" /><div className="mt-4 font-bold">No saved runs yet</div><p className="mt-1 max-w-xs text-sm text-[#607286]">Select search results and add them to the collection, or import a previously exported collection JSON.</p></div></div>}
+      </> : <div className="flex-1 overflow-y-auto p-5 lg:p-7"><div className="py-6 text-center"><ShoppingBasket className="mx-auto size-10 text-[#9ab0bc]" /><div className="mt-4 font-bold">No saved runs yet</div><p className="mx-auto mt-1 max-w-sm text-sm text-[#607286]">Select search results and add them here, paste a list of accessions below, or import a previously exported collection JSON.</p></div><AddAccessions state={paste} onAdd={(added) => onReplace(dedupeRuns(runs, added))} /></div>}
     </aside>
   </div>;
 }
 
 function LookupStatus({ state, total }: { state: CollectionFilesState; total: number }) {
-  if (state.loading || state.pending) {
-    const done = total - state.pending;
-    return <div className="flex shrink-0 items-center gap-3 border-b border-[#dce6eb] bg-white px-5 py-2 text-xs text-[#405563]">
-      <LoaderCircle className="size-4 animate-spin text-[#087f8c]" />
-      <span>Looking up files: {done} / {total} runs</span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e3eaee]"><div className="h-full rounded-full bg-[#087f8c] transition-[width]" style={{ width: `${(done / total) * 100}%` }} /></div>
-    </div>;
-  }
-  if (state.error || state.failed.length) {
-    return <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[#efd998] bg-[#fff4cf] px-5 py-2 text-xs text-[#72530a]">
+  const active = (['ena', 'original'] as const).filter((kind) => state.lookups[kind].requested && (state.lookups[kind].loading || state.lookups[kind].done < total) && !state.lookups[kind].error);
+  const errors = (['ena', 'original'] as const).map((kind) => state.lookups[kind].error).filter(Boolean);
+  return <>
+    {active.map((kind) => {
+      const { done } = state.lookups[kind];
+      return <div key={kind} className="flex shrink-0 items-center gap-3 border-b border-[#dce6eb] bg-white px-5 py-2 text-xs text-[#405563]">
+        <LoaderCircle className="size-4 animate-spin text-[#087f8c]" />
+        <span className="w-64">{kind === 'ena' ? 'FASTQ/SRA lookup (ENA)' : 'Original files lookup (NCBI, slower)'}: {done} / {total}</span>
+        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e3eaee]"><div className="h-full rounded-full bg-[#087f8c] transition-[width]" style={{ width: `${(done / total) * 100}%` }} /></div>
+      </div>;
+    })}
+    {errors.length || state.failed.length ? <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[#efd998] bg-[#fff4cf] px-5 py-2 text-xs text-[#72530a]">
       <AlertTriangle className="size-4" />
-      <span>{state.error || `${state.failed.length} runs could not be fully checked (NCBI or ENA did not answer). Their file lists may be incomplete.`}</span>
+      <span>{errors[0] || `${state.failed.length} lookups did not complete (NCBI or ENA did not answer). Affected runs may be missing files.`}</span>
       <button onClick={state.retryFailed} className="ml-auto inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 font-bold"><RotateCw className="size-3" /> Retry</button>
-    </div>;
-  }
-  return null;
+    </div> : null}
+  </>;
 }
 
-function CollectionRuns({ runs, state, onRemove }: { runs: RunSummary[]; state: CollectionFilesState; onRemove: (accession: string) => void }) {
+function CollectionRuns({ runs, state, onRemove, onCheckOriginal }: { runs: RunSummary[]; state: CollectionFilesState; onRemove: (accession: string) => void; onCheckOriginal: () => void }) {
   const [filter, setFilter] = useState('');
   const visible = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     return needle ? runs.filter((run) => [run.accession, run.title, run.organism, run.project].join(' ').toLowerCase().includes(needle)) : runs;
   }, [filter, runs]);
+  const originalLookup = state.lookups.original;
   return <div className="space-y-3">
+    {!originalLookup.requested ? <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#dce6eb] bg-white px-4 py-3 text-sm text-[#405563]">
+      <span className="flex-1">FASTQ and SRA files are listed from ENA. Original submitted files (FAST5, POD5, BAM…) need a slower NCBI lookup and are checked on demand.</span>
+      <button onClick={onCheckOriginal} className={button}>Check Original files</button>
+    </div> : null}
     <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={`Filter ${runs.length} saved runs`} className="w-full rounded-xl border border-[#dce6eb] bg-white px-4 py-2 text-sm outline-none focus:border-[#087f8c]" />
     <div className="overflow-hidden rounded-2xl border border-[#dce6eb] bg-white">
       {visible.map((run) => {
-        const result = state.results.get(run.accession);
-        const problems = [...(result?.errors || []), ...(result?.error ? [result.error] : [])];
+        const entry = state.results.get(run.accession) || {};
+        const lookups = [entry.ena, entry.original].filter((item): item is NonNullable<typeof item> => Boolean(item));
+        const problems = lookups.flatMap((result) => [...(result.errors || []), ...(result.error ? [result.error] : [])]);
         const tally = { fastq: 0, sra: 0, original: 0 } as Record<DownloadFile['representation'], number>;
-        result?.files.forEach((file) => { tally[file.representation] += 1; });
+        lookups.forEach((result) => result.files.forEach((file) => { tally[file.representation] += 1; }));
+        const originalLabel = entry.original ? `${tally.original} Original` : originalLookup.requested ? 'Original: checking…' : 'Original: not checked';
         return <div key={run.accession} className="flex items-start gap-3 border-b border-[#edf2f4] px-4 py-2.5 text-sm last:border-0">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-baseline gap-x-2"><a href={ncbiRunUrl(run.accession)} target="_blank" rel="noopener" className="font-mono font-bold text-[#087f8c] hover:underline">{run.accession}</a><span className="truncate font-medium" title={run.title}>{run.title}</span></div>
@@ -158,7 +172,7 @@ function CollectionRuns({ runs, state, onRemove }: { runs: RunSummary[]; state: 
               {run.strategy ? <span>{run.strategy}</span> : null}
               {run.layout ? <span>{layoutLabel(run.layout)}</span> : null}
               <span>{formatBases(run.totalBases)}</span>
-              {result ? <span>{tally.fastq} FASTQ · {tally.original} Original</span> : <span>checking…</span>}
+              <span>{entry.ena ? `${tally.fastq} FASTQ` : 'FASTQ: checking…'} · {originalLabel}</span>
             </div>
             {problems.length ? <div className="mt-1 flex items-center gap-1 text-xs text-[#9a5b00]" title={problems.join('\n')}><AlertTriangle className="size-3" />{problems[0]}</div> : null}
           </div>
@@ -170,7 +184,7 @@ function CollectionRuns({ runs, state, onRemove }: { runs: RunSummary[]; state: 
   </div>;
 }
 
-function BulkFileDownloads({ representation, files, runs, complete }: { representation: DownloadFile['representation']; files: DownloadFile[]; runs: RunSummary[]; complete: boolean }) {
+function BulkFileDownloads({ representation, files, runs, complete, onRecheck }: { representation: DownloadFile['representation']; files: DownloadFile[]; runs: RunSummary[]; complete: boolean; onRecheck: (accessions: string[]) => void }) {
   const methods = methodsFor(representation);
   const [rename, setRename] = useState(representation !== 'original');
   const [verifyMd5, setVerifyMd5] = useState(true);
@@ -185,6 +199,7 @@ function BulkFileDownloads({ representation, files, runs, complete }: { represen
   const totalSize = selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0);
   const runsWithFiles = new Set(selectedFiles.map((file) => file.accession)).size;
   const missingSizes = selectedFiles.filter((file) => !file.size).length;
+  const withoutFiles = complete && representation === 'fastq' ? runs.filter((run) => !selectedFiles.some((file) => file.accession === run.accession)).map((run) => run.accession) : [];
 
   const methodNote: Partial<Record<DownloadMethod, string>> = {
     aspera: 'Aspera (ascp) is usually much faster than HTTPS for ENA FASTQ. Install IBM Aspera Connect or the ascp CLI; set ASPERA_KEY if your key lives elsewhere.',
@@ -198,6 +213,10 @@ function BulkFileDownloads({ representation, files, runs, complete }: { represen
       {representation === 'original' ? ' Original files are whatever the submitter uploaded (FAST5, POD5, BAM, …) and can be very large.' : ''}
       {!complete ? ' Lookups still running; this list will grow.' : ''}
     </div>
+    {withoutFiles.length ? <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#efd998] bg-[#fff4cf] px-4 py-2 text-xs text-[#72530a]">
+      <span className="min-w-0 flex-1"><strong>{withoutFiles.length} runs have no FASTQ in ENA</strong> and are not in this script: {withoutFiles.slice(0, 12).join(', ')}{withoutFiles.length > 12 ? ` and ${withoutFiles.length - 12} more` : ''}. They may not be mirrored yet (use the SRA tab), or ENA answered incompletely.</span>
+      <button onClick={() => onRecheck(withoutFiles)} className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 font-bold"><RotateCw className="size-3" /> Re-check</button>
+    </div> : null}
     {selectedFiles.length ? <>
       <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#dce6eb] bg-white p-3">
         <span className="mr-1 text-xs font-bold uppercase tracking-wider text-[#607286]">Tool</span>
@@ -212,6 +231,11 @@ function BulkFileDownloads({ representation, files, runs, complete }: { represen
         <button onClick={() => void copyText('URLs', urls)} className={button}><Clipboard className="size-4" /> Copy URLs</button>
         <button onClick={() => downloadText(`${labels.stem}.urls.txt`, urls)} className={button}><FileDown className="size-4" /> URLs.txt</button>
         <button onClick={() => setShowManifest((value) => !value)} className={`${button} ${showManifest ? 'border-[#087f8c] bg-[#e0f4f4]' : ''}`}><FileDown className="size-4" /> Manifest TSV</button>
+        {representation === 'fastq' ? <button onClick={() => {
+          const { csv, skipped } = buildNfcoreSamplesheet(runs, files);
+          downloadText('samplesheet.csv', csv, 'text/csv;charset=utf-8');
+          if (skipped.length) toast.warning(`${skipped.length} runs without a usable FASTQ pair were left out`, { description: skipped.slice(0, 8).join(', ') + (skipped.length > 8 ? '…' : '') });
+        }} className={button} title="sample,fastq_1,fastq_2,strandedness with ENA URLs, for nf-core/rnaseq and similar pipelines"><FileDown className="size-4" /> nf-core samplesheet</button> : null}
       </div>
       <p className="text-xs text-[#607286]">Run with <code className="rounded bg-white px-1">bash download-{labels.stem}.sh</code>. Works on Linux and macOS.</p>
       {showManifest ? <section className="overflow-hidden rounded-2xl border border-[#dce6eb] bg-white"><div className="flex flex-wrap items-center gap-2 border-b border-[#dce6eb] px-4 py-3"><strong className="text-sm">Manifest TSV</strong><button onClick={() => void copyText('Manifest', manifest)} className={`ml-auto ${button}`}><Clipboard className="size-4" /> Copy</button><button onClick={() => downloadText(`${labels.stem}.tsv`, manifest, 'text/tab-separated-values;charset=utf-8')} className={primaryButton}><ArrowDownToLine className="size-4" /> Download</button></div><pre className={`max-h-[300px] rounded-none ${codeBlock}`}><code>{manifest}</code></pre></section> : null}
@@ -225,13 +249,14 @@ function BulkFileDownloads({ representation, files, runs, complete }: { represen
   </div>;
 }
 
-function FullMetadata({ runs, files }: { runs: RunSummary[]; files: DownloadFile[] }) {
+function FullMetadata({ runs, files, originalsChecked, onCheckOriginal }: { runs: RunSummary[]; files: DownloadFile[]; originalsChecked: boolean; onCheckOriginal: () => void }) {
   const [format, setFormat] = useState<MetadataFormat>('tsv');
   const rows = useMemo(() => buildMetadataRows(runs, files), [runs, files]);
   const content = useMemo(() => serializeMetadata(rows, format), [rows, format]);
   const mime = { tsv: 'text/tab-separated-values', csv: 'text/csv', json: 'application/json', yaml: 'application/yaml' }[format] + ';charset=utf-8';
   return <div className="space-y-4">
     <p className="text-sm text-[#607286]">One row per FASTQ file (paired-end runs get one row per read file), with run, sample, and library metadata.</p>
+    {!originalsChecked ? <div className="flex flex-wrap items-center gap-3 rounded-xl bg-[#fff4cf] px-4 py-2 text-xs text-[#72530a]"><span className="flex-1">The <code>original_urls</code> column is filled only after Original files have been checked.</span><button onClick={onCheckOriginal} className={button}>Check Original files</button></div> : null}
     <div className="flex flex-wrap gap-2">
       {(['tsv', 'csv', 'json', 'yaml'] as const).map((value) => <button key={value} onClick={() => setFormat(value)} className={`rounded-lg px-4 py-2 text-xs font-black uppercase ${format === value ? 'bg-[#071b2f] text-white' : 'border border-[#bdd0d8] bg-white'}`}>{value}</button>)}
       <button onClick={() => void copyText('Metadata', content)} className={`ml-auto ${button}`}><Clipboard className="size-4" /> Copy</button>
@@ -244,6 +269,11 @@ function FullMetadata({ runs, files }: { runs: RunSummary[]; files: DownloadFile
 function BulkToolDetails({ runs }: { runs: RunSummary[] }) {
   return <div className="space-y-4">
     <p className="text-sm text-[#607286]">One command per saved run for popular download tools. These fetch FASTQ or normalized SRA; use the Original files tab for FAST5/POD5 and other submitter files.</p>
+    <article className="rounded-2xl border border-[#b9dddd] bg-[#e8f6f5] p-4">
+      <div className="flex flex-wrap items-center gap-2"><strong>nf-core/fetchngs</strong><span className="text-xs text-[#405563]">Nextflow pipeline: FASTQ + metadata + samplesheets for nf-core/rnaseq, taxprofiler, …</span><a href="https://nf-co.re/fetchngs" target="_blank" rel="noopener" className="ml-auto text-xs font-bold text-[#087f8c]">nf-co.re</a></div>
+      <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => downloadText('ids.csv', buildFetchngsIds(runs), 'text/csv;charset=utf-8')} className={primaryButton}><FileDown className="size-4" /> ids.csv ({runs.length} runs)</button><button onClick={() => void copyText('Command', FETCHNGS_COMMAND)} className={button}><Clipboard className="size-3" /> Copy command</button></div>
+      <pre className={`mt-3 ${codeBlock} rounded-xl p-3`}><code>{FETCHNGS_COMMAND}</code></pre>
+    </article>
     {toolCommands.map((tool) => {
       const commands = runs.map((run) => tool.command(run.accession)).join('\n') + '\n';
       return <article key={tool.name} className="rounded-2xl border border-[#dce6eb] bg-white p-4 shadow-sm">
@@ -252,4 +282,48 @@ function BulkToolDetails({ runs }: { runs: RunSummary[] }) {
       </article>;
     })}
   </div>;
+}
+
+const ACCESSION_HINT = /\b(?:[SED]R[RXSP]\d{5,}|PRJ[DEN][AB]\d+|SAM[NED][A-Z]?\d+|GS[EM]\d+)\b/gi;
+
+type PasteState = { text: string; message: { tone: 'ok' | 'warn' | 'error'; text: string } | null };
+
+function AddAccessions({ onAdd, collapsible, state: [paste, setPaste] }: { onAdd: (runs: RunSummary[]) => void; collapsible?: boolean; state: [PasteState, React.Dispatch<React.SetStateAction<PasteState>>] }) {
+  const [open, setOpen] = useState(!collapsible || Boolean(paste.message));
+  const [busy, setBusy] = useState(false);
+  const { text, message } = paste;
+  const setText = (value: string) => setPaste((current) => ({ ...current, text: value }));
+  const setMessage = (value: PasteState['message']) => setPaste((current) => ({ ...current, message: value }));
+  const detected = useMemo(() => new Set((text.match(ACCESSION_HINT) || []).map((item) => item.toUpperCase())).size, [text]);
+
+  async function submit() {
+    setBusy(true); setMessage(null);
+    try {
+      const response = await fetch('/api/v1/runs/lookup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
+      if (!response.ok) throw new Error(await readError(response));
+      const data = await response.json() as { runs: RunSummary[]; unmatched: string[]; truncated: boolean; total: number };
+      onAdd(data.runs);
+      const parts = [`Added ${data.runs.length.toLocaleString()} runs.`];
+      if (data.unmatched.length) parts.push(`Not found: ${data.unmatched.slice(0, 10).join(', ')}${data.unmatched.length > 10 ? ` and ${data.unmatched.length - 10} more` : ''}.`);
+      if (data.truncated) parts.push(`Stopped at ${data.runs.length.toLocaleString()} runs; split the list to add more.`);
+      setMessage({ tone: data.unmatched.length || data.truncated || !data.runs.length ? 'warn' : 'ok', text: parts.join(' ') });
+      if (data.runs.length) { toast.success(`Added ${data.runs.length} runs to the collection`); if (!data.unmatched.length) setText(''); }
+    } catch (cause) {
+      setMessage({ tone: 'error', text: cause instanceof Error ? cause.message : 'Lookup failed.' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) return <button onClick={() => setOpen(true)} className={`mb-3 ${button}`}><ClipboardPaste className="size-4" /> Paste accession list</button>;
+  return <section className="mb-4 rounded-2xl border border-[#dce6eb] bg-white p-4">
+    <div className="flex items-center"><strong className="text-sm">Add runs from an accession list</strong>{collapsible ? <button onClick={() => setOpen(false)} className="ml-auto text-[#607286]" aria-label="Close"><X className="size-4" /></button> : null}</div>
+    <p className="mt-1 text-xs text-[#607286]">Paste anything containing SRR/ERR/DRR, SRX, SRP, PRJNA/PRJEB, SAMN, GSE or GSM accessions — a column from a spreadsheet, a paper's data availability statement, etc. Projects and experiments expand to all their runs.</p>
+    <textarea value={text} onChange={(event) => setText(event.target.value)} rows={4} placeholder={'SRR12881185\nPRJNA517295\nGSM1234567'} className="mt-3 w-full rounded-xl border border-[#dce6eb] px-3 py-2 font-mono text-xs outline-none focus:border-[#087f8c]" />
+    <div className="mt-2 flex flex-wrap items-center gap-3">
+      <button onClick={() => void submit()} disabled={busy || !detected} className={primaryButton}>{busy ? <LoaderCircle className="size-4 animate-spin" /> : <ClipboardPaste className="size-4" />} Add {detected ? `${detected} accession${detected === 1 ? '' : 's'}` : 'runs'}</button>
+      {detected > 500 ? <span className="text-xs text-red-700">At most 500 accessions per lookup.</span> : null}
+      {message ? <span className={`text-xs ${message.tone === 'error' ? 'text-red-700' : message.tone === 'warn' ? 'text-[#9a5b00]' : 'text-[#07535b]'}`}>{message.text}</span> : null}
+    </div>
+  </section>;
 }

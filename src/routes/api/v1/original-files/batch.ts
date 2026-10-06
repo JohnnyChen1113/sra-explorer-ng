@@ -11,7 +11,7 @@ export const Route = createFileRoute('/api/v1/original-files/batch')({
     handlers: {
       POST: async ({ request }) => {
         try {
-          const access = enforceAccess(request);
+          const access = await enforceAccess(request);
           const body = await request.json() as { accessions?: unknown };
           if (!Array.isArray(body.accessions) || !body.accessions.length || body.accessions.length > MAX_BATCH) {
             return withAccessHeaders(Response.json({ error: `Provide 1-${MAX_BATCH} run accessions.` }, { status: 400 }), access);

@@ -8,7 +8,15 @@ It searches NCBI SRA in explicit batches of 500, keeps accumulated results in a 
 
 Searches are shareable (`/?q=PRJNA517295`). Loaded runs can be filtered by organism, library strategy, layout, and instrument, sorted by any column, and range-selected with Shift-click. The collection workspace lists saved runs (removable, with undo), caches file lookups in the browser, flags runs whose NCBI/ENA lookup failed instead of reporting them as having no files, and generates portable Linux/macOS download scripts (curl, axel, Aspera, fastq-dl, Kingfisher) with MD5 checks.
 
-Set `NCBI_API_KEY` on the server to raise the NCBI E-utilities limit from 3 to 10 requests per second.
+FASTQ/SRA files come from ENA and load quickly; Original submitted files need NCBI's slower Run Browser and are only looked up when the Original files tab is opened. A collection can also be filled by pasting a list of accessions (runs, projects, BioSamples, GEO), and exported as an nf-core samplesheet or nf-core/fetchngs `ids.csv`.
+
+## Server configuration
+
+| Variable | Purpose |
+| --- | --- |
+| `NCBI_API_KEY` | Raises the NCBI E-utilities limit from 3 to 10 requests per second. |
+| `SRA_API_TOKENS` | Comma-separated bearer tokens exempt from the anonymous rate limit. |
+| `KV_REST_API_URL` / `KV_REST_API_TOKEN` (or `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`) | Shares the anonymous rate limit across serverless instances through Upstash Redis. Without them each instance counts separately. |
 
 ## Development
 
@@ -17,6 +25,7 @@ pnpm install
 pnpm dev
 pnpm typecheck
 pnpm test
+pnpm test:e2e   # Playwright; API calls are mocked, no NCBI/ENA access needed
 pnpm build
 pnpm cf:build
 ```
@@ -31,11 +40,11 @@ curl 'http://localhost:3000/api/v1/runs/SRR12881185/files'
 
 Responses contain a `nextCursor`; callers explicitly request every additional batch. OpenAPI is served at `/api/v1/openapi.json`.
 
-Anonymous requests are limited to 30 requests per minute per IP on a best-effort, per-instance basis. Optional bearer tokens are configured with the comma-separated `SRA_API_TOKENS` secret. The first release deliberately avoids a user database and token-management UI.
+Anonymous requests are limited to 30 requests per minute per IP, shared across instances when Upstash Redis is configured and per instance otherwise. Optional bearer tokens are configured with the comma-separated `SRA_API_TOKENS` secret. The first release deliberately avoids a user database and token-management UI.
 
 ## Remote MCP
 
-The Streamable HTTP endpoint is `/mcp`. It exposes `search_sra`, `load_more_results`, `get_run_files`, and `create_download_manifest`. The site does not host an LLM or pay model inference costs; external agents call this read-only service.
+The Streamable HTTP endpoint is `/mcp`. It exposes `search_sra`, `load_more_results`, `lookup_accessions`, `get_run_files`, and `create_download_manifest`. The site does not host an LLM or pay model inference costs; external agents call this read-only service.
 
 ```json
 { "mcpServers": { "sra-explorer": { "url": "https://sra.ai2paper.com/mcp" } } }

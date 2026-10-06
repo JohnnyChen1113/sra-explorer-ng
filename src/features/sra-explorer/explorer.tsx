@@ -53,6 +53,8 @@ export function ExplorerPage() {
       if (Array.isArray(saved)) setCollection(saved);
     } catch {}
     setCollectionReady(true);
+    // Lets end-to-end tests wait until React handles clicks.
+    document.documentElement.dataset.hydrated = 'true';
   }, []);
 
   useEffect(() => {
@@ -193,7 +195,7 @@ export function ExplorerPage() {
       </header>
 
       <main className="mx-auto w-full max-w-[1540px] flex-1 px-4 py-6 lg:px-10">
-        {!hasResults ? <Intro query={query} onChange={setQuery} onSubmit={(term) => startSearch(term)} /> : null}
+        {!hasResults ? <Intro query={query} onChange={setQuery} onSubmit={(term) => startSearch(term)} onOpenCollection={() => setWorkspaceOpen(true)} /> : null}
 
         {error ? <div role="alert" className="mt-2 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><span className="flex-1">{error}</span><button onClick={() => (cursor && runs.length ? void runSearch(activeQuery, cursor) : startSearch(activeQuery || query, false))} className="rounded-md bg-white px-2 py-1 text-xs font-bold">Retry</button></div> : null}
 
@@ -266,13 +268,14 @@ function SearchForm({ query, loading, compact, onChange, onSubmit }: { query: st
   </form>;
 }
 
-function Intro({ query, onChange, onSubmit }: { query: string; onChange: (value: string) => void; onSubmit: (term: string) => void }) {
+function Intro({ query, onChange, onSubmit, onOpenCollection }: { query: string; onChange: (value: string) => void; onSubmit: (term: string) => void; onOpenCollection: () => void }) {
   return <>
     <section className="relative overflow-hidden rounded-[24px] bg-gradient-to-br from-[#071b2f] via-[#0b3b4c] to-[#087f8c] px-6 py-8 text-white shadow-[0_24px_70px_rgba(7,27,47,.16)] lg:px-12 lg:py-10">
       <h1 className="max-w-3xl text-3xl font-black tracking-[-.04em] sm:text-4xl">Find SRA runs and download FASTQ, SRA, or the original submitted files.</h1>
       <div className="mt-6 max-w-3xl">
         <SearchForm query={query} loading={false} onChange={onChange} onSubmit={() => onSubmit(query)} />
         <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-300">Try: {EXAMPLES.map((item) => <button type="button" key={item} onClick={() => onSubmit(item)} className="rounded-md bg-white/10 px-2 py-1 font-mono text-[#dfff9a] hover:bg-white/20">{item}</button>)}</div>
+        <button type="button" onClick={onOpenCollection} className="mt-3 text-sm font-semibold text-slate-200 underline decoration-white/30 underline-offset-4 hover:text-white">Have a list of accessions from a paper? Paste them into a collection →</button>
       </div>
     </section>
     <section aria-labelledby="about-sra-explorer" className="mt-5 grid gap-3 lg:grid-cols-3">

@@ -62,3 +62,19 @@ test('formats bases in Mb and Gb', () => {
   assert.equal(formatBases(2_500_000_000), '2.5 Gb');
   assert.equal(formatBases(0), '—');
 });
+
+test('nf-core samplesheet pairs reads and ignores the unpaired ENA file', async () => {
+  const { buildNfcoreSamplesheet, buildFetchngsIds } = await import('../src/features/sra-explorer/scripts.ts');
+  const paired = [...files, { ...files[0], filename: 'SRR1.fastq.gz', url: 'https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR1/SRR1.fastq.gz' }];
+  const single: DownloadFile = { ...files[0], accession: 'SRR2', filename: 'SRR2.fastq.gz', url: 'https://x/SRR2.fastq.gz' };
+  const runs2 = [...runs, { ...runs[0], accession: 'SRR2' }, { ...runs[0], accession: 'SRR3' }];
+  const { csv, skipped } = buildNfcoreSamplesheet(runs2, [...paired, single]);
+  assert.equal(csv, 'sample,fastq_1,fastq_2,strandedness\nSRR1,https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR1/SRR1_1.fastq.gz,https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR1/SRR1_2.fastq.gz,auto\nSRR2,https://x/SRR2.fastq.gz,,auto\n');
+  assert.deepEqual(skipped, ['SRR3']);
+  assert.equal(buildFetchngsIds(runs2), 'SRR1\nSRR2\nSRR3\n');
+});
+
+test('extracts accessions from free text', async () => {
+  const { extractAccessions } = await import('../src/features/sra-explorer/server/ncbi.ts');
+  assert.deepEqual(extractAccessions('Data: PRJNA517295 (runs srr12881185, SRR12881185; GSE30567), SAMN10824325 and ERP009109.'), ['PRJNA517295', 'SRR12881185', 'GSE30567', 'SAMN10824325', 'ERP009109']);
+});

@@ -1,5 +1,4 @@
 import { paraglideVitePlugin } from '@inlang/paraglide-js';
-import mdx from '@mdx-js/rollup';
 import tailwindcss from '@tailwindcss/vite';
 import { tanstackStart } from '@tanstack/react-start/plugin/vite';
 import viteReact from '@vitejs/plugin-react';
@@ -18,7 +17,6 @@ export default defineConfig({
     tsconfigPaths: true,
   },
   plugins: [
-    { enforce: 'pre', ...mdx({ providerImportSource: '@mdx-js/react' }) },
     tailwindcss(),
     paraglideVitePlugin({
       project: './project.inlang',
@@ -54,6 +52,8 @@ export default defineConfig({
       srcDirectory: 'src',
     }),
     viteReact(),
-    nitro(),
+    // Original-file lookups wait on NCBI's Run Browser (2-5 s per run, rate limited),
+    // so a 20-run batch can need ~30 s.
+    nitro({ vercel: { functions: { maxDuration: 60 } } }),
   ],
 });

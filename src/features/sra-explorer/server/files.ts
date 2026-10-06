@@ -68,15 +68,22 @@ async function getEnaFiles(accession: string) {
   return files;
 }
 
-export async function getRunFiles(rawAccession: string): Promise<RunFilesResponse> {
+export type FileSource = 'ena' | 'original';
+
+export async function getRunFiles(rawAccession: string, include: FileSource[] = ['ena', 'original']): Promise<RunFilesResponse> {
   const accession = assertRunAccession(rawAccession);
   const errors: string[] = [];
-  const [originalResult, enaResult] = await Promise.allSettled([getNcbiOriginal(accession), getEnaFiles(accession)]);
+  const wantOriginal = include.includes('original');
+  const wantEna = include.includes('ena');
+  const [originalResult, enaResult] = await Promise.allSettled([
+    wantOriginal ? getNcbiOriginal(accession) : Promise.resolve({ files: [] as DownloadFile[], project: '' }),
+    wantEna ? getEnaFiles(accession) : Promise.resolve([] as DownloadFile[]),
+  ]);
   const original = originalResult.status === 'fulfilled' ? originalResult.value : { files: [] as DownloadFile[], project: '' };
   const ena = enaResult.status === 'fulfilled' ? enaResult.value : [];
   if (originalResult.status === 'rejected') errors.push(`Original files unknown: ${originalResult.reason instanceof Error ? originalResult.reason.message : 'NCBI lookup failed'}`);
   if (enaResult.status === 'rejected') errors.push(`FASTQ/SRA list unknown: ${enaResult.reason instanceof Error ? enaResult.reason.message : 'ENA lookup failed'}`);
-  const normalized = ena.some((file) => file.representation === 'sra') ? [] : [{
+  const normalized = !wantEna || ena.some((file) => file.representation === 'sra') ? [] : [{
     accession,
     representation: 'sra' as const,
     filename: `${accession}.sra`,
@@ -85,5 +92,7 @@ export async function getRunFiles(rawAccession: string): Promise<RunFilesRespons
     md5: null,
     format: 'SRA Normalized',
   }];
-  return { accession, project: original.project, files: [...original.files, ...ena, ...normalized].map((file) => ({ ...file, project: original.project })), sources: ['NCBI Run Browser', 'ENA Portal API', 'NCBI SRA Cloud'], errors };
+  const sources = [...(wantOriginal ? ['NCBI Run Browser'] : []), ...(wantEna ? ['ENA Portal API', 'NCBI SRA Cloud'] : [])];
+  const files = [...original.files, ...ena, ...normalized].map((file) => (original.project ? { ...file, project: original.project } : file));
+  return { accession, project: original.project || undefined, files, sources, checked: include, errors };
 }

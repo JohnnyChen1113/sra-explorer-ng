@@ -5,12 +5,11 @@ export const siteConfig = {
   url: envConfigs.app_url,
   description: envConfigs.app_description,
   logo: envConfigs.app_logo,
-  email: 'hello@example.com',
-  githubUrl: '',
+  email: '',
+  githubUrl: 'https://github.com/JohnnyChen1113/sra-explorer-ng',
   nav: [
     { href: '/', label: { zh: '首页', en: 'Home' } },
     { href: '/docs', label: { zh: '文档', en: 'Docs' } },
-    { href: '/blog', label: { zh: '博客', en: 'Blog' } },
   ],
   footerLinks: [
     { href: '/terms', label: { zh: '服务条款', en: 'Terms' } },

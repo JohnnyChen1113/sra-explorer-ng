@@ -8,7 +8,7 @@ export const Route = createFileRoute('/api/v1/runs/$accession/files')({
     handlers: {
       GET: async ({ request, params }) => {
         try {
-          const access = enforceAccess(request);
+          const access = await enforceAccess(request);
           const result = await getRunFiles(params.accession);
           return withAccessHeaders(Response.json(result, { headers: { 'cache-control': 'public, max-age=300, s-maxage=86400' } }), access);
         } catch (error) {

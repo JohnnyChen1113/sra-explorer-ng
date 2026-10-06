@@ -51,3 +51,7 @@ yarn-error.log*
 
 # npm lockfiles from other package managers
 package-lock.json
+
+# playwright
+/test-results/
+/playwright-report/

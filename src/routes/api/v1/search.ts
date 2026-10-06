@@ -8,7 +8,7 @@ export const Route = createFileRoute('/api/v1/search')({
     handlers: {
       GET: async ({ request }) => {
         try {
-          const access = enforceAccess(request);
+          const access = await enforceAccess(request);
           const url = new URL(request.url);
           const result = await searchSra(url.searchParams.get('q') || '', url.searchParams.get('cursor'));
           return withAccessHeaders(Response.json(result, { headers: { 'cache-control': 'public, max-age=60, s-maxage=300' } }), access);
