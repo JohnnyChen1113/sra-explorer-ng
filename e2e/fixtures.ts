@@ -14,6 +14,7 @@ export const runs = Array.from({ length: 6 }, (_, index) => ({
   experiment: `SRX20000${index}`,
   study: 'SRP300000',
   biosample: `SAMN4000000${index}`,
+  sample: `SRS50000${index}`,
   spots: 1_000_000,
 }));
 
@@ -33,7 +34,7 @@ function enaRow(accession: string) {
 type Run = (typeof runs)[number];
 
 function esummaryItem(run: Run) {
-  const expxml = `<Summary><Title>${run.title}</Title><Platform instrument_model="${run.platform}">ILLUMINA</Platform></Summary><Experiment acc="${run.experiment}"/><Study acc="${run.study}"/><Organism ScientificName="${run.organism}"/><Library_descriptor><LIBRARY_STRATEGY>${run.strategy}</LIBRARY_STRATEGY><LIBRARY_SOURCE>${run.source}</LIBRARY_SOURCE><LIBRARY_LAYOUT><${run.layout}/></LIBRARY_LAYOUT></Library_descriptor><Bioproject>${run.project}</Bioproject><Biosample>${run.biosample}</Biosample>`;
+  const expxml = `<Summary><Title>${run.title}</Title><Platform instrument_model="${run.platform}">ILLUMINA</Platform></Summary><Experiment acc="${run.experiment}"/><Study acc="${run.study}"/><Organism ScientificName="${run.organism}"/><Sample acc="${run.sample}" name=""/><Library_descriptor><LIBRARY_STRATEGY>${run.strategy}</LIBRARY_STRATEGY><LIBRARY_SOURCE>${run.source}</LIBRARY_SOURCE><LIBRARY_LAYOUT><${run.layout}/></LIBRARY_LAYOUT></Library_descriptor><Bioproject>${run.project}</Bioproject><Biosample>${run.biosample}</Biosample>`;
   return { expxml, runs: `<Run acc="${run.accession}" total_spots="${run.spots}" total_bases="${run.totalBases}"/>`, createdate: run.createdAt };
 }
 
@@ -57,6 +58,15 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
   await page.route('https://eutils.ncbi.nlm.nih.gov/**', async (route: Route) => {
     const request = route.request();
     const params = new URLSearchParams(request.method() === 'POST' ? request.postData() || '' : new URL(request.url()).search);
+    if (request.url().includes('elink.fcgi')) {
+      await route.fulfill({ json: { linksets: [{ dbfrom: 'pubmed', ids: [params.get('id')] }] } });
+      return;
+    }
+    if (params.get('db') === 'pubmed') {
+      const id = params.get('id') || '';
+      await route.fulfill({ json: { result: { uids: [id], [id]: { title: 'Liver tumour transcriptomes.', fulljournalname: 'Journal of Tests', pubdate: '2022 Jun' } } } });
+      return;
+    }
     if (request.url().includes('esearch.fcgi')) {
       const term = params.get('term') || '';
       const matched = term === 'nothing' ? [] : request.method() === 'POST' ? runs.filter((run) => term.includes(run.accession)) : runs;
@@ -86,4 +96,33 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
   });
 
   return { fileRequests, enaRequests, healOriginal: () => { failOriginal = new Set(); }, healEna: () => { emptyEna = new Set(); failEna = new Set(); } };
+}
+
+export const seqoutProjects = [
+  { accession: 'GSE100000', title: 'Liver tumour and normal tissue RNA-seq', summary: 'Bulk RNA-seq of matched liver samples.', updated_at: '2022-01-01', organisms: ['Homo sapiens'], source: 'geo', library_strategies: ['RNA-Seq'], instrument_models: ['Illumina NovaSeq 6000'], publications: [{ pmid: '30000001', title: 'Liver tumour transcriptomes.', journal: 'Journal of Tests', pub_date: '2022 Jun', citation_count: 12 }], pmid: '30000001' },
+  // Loosely typed fields as seqout really returns them sometimes.
+  { accession: 'SRP999999', title: 'Unrelated mouse study', organisms: ['Mus musculus'], source: 'sra', instrument_models: null, library_strategies: null, publications: [{ pmid: '30000002', title: 'Mouse paper', pub_date: 2020, journal: 'Mouse J' }] },
+];
+
+/** Mock seqout.org. With `down`, every seqout call fails so pages must degrade gracefully. */
+export async function mockSeqout(page: Page, { down = false } = {}) {
+  const calls: string[] = [];
+  await page.route('https://seqout.org/api/**', async (route) => {
+    const url = new URL(route.request().url());
+    calls.push(url.pathname + url.search);
+    if (down) return route.fulfill({ status: 503, body: 'down' });
+    const path = url.pathname.replace('/api', '');
+    if (path === '/search') {
+      const q = url.searchParams.get('q') || '';
+      const results = q === 'GSE100000' ? [seqoutProjects[0]] : q.startsWith('Liver tumour transcriptomes') ? [seqoutProjects[0]] : q === 'nothing' ? [] : seqoutProjects;
+      return route.fulfill({ json: { results, total: null, next_cursor: null } });
+    }
+    if (path === '/project/GSE100000/xref') return route.fulfill({ json: { accession: 'GSE100000', xref: [{ accession: 'SRP300000', link_type: 'SRA' }, { accession: 'GSE1', link_type: 'SuperSeries of' }] } });
+    if (path === '/project/SRP300000/enriched') {
+      return route.fulfill({ json: { accession: 'SRP300000', n_samples: runs.length, samples: runs.map((run, index) => ({ sample: run.sample, title: `${run.title} sample`, tissue: 'Liver', disease: index % 2 ? 'Hepatocellular carcinoma' : 'Healthy', sex: 'Female', age: '50 years', cell_type: null })) } });
+    }
+    if (path.startsWith('/accession/')) return route.fulfill({ json: { project_accession: 'GSE100000' } });
+    return route.fulfill({ status: 404, json: { detail: 'not found' } });
+  });
+  return { calls };
 }

@@ -12,8 +12,14 @@ export type RunSummary = {
   experiment?: string;
   study?: string;
   biosample?: string;
+  /** SRA sample accession (SRS/ERS/DRS). */
+  sample?: string;
   spots?: number;
+  /** AI-extracted sample annotations from seqout.org (Discover page only). */
+  annotations?: RunAnnotations;
 };
+
+export type RunAnnotations = Partial<Record<'sample_title' | 'tissue' | 'cell_type' | 'disease' | 'treatment' | 'sex' | 'age' | 'cell_line' | 'development_stage', string>>;
 
 export type SearchCursor = {
   webEnv: string;

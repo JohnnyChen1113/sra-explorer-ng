@@ -61,6 +61,7 @@ export function parseSummaryResponse(payload: any): RunSummary[] {
         experiment: tagAttrs('Experiment').acc || '',
         study,
         biosample: textBetween(expxml, 'Biosample'),
+        sample: tagAttrs('Sample').acc || '',
         spots: Number(attrs.total_spots) || 0,
       });
     }
@@ -171,5 +172,24 @@ export function createSources(fetcher: Fetcher, { apiKey = '' }: { apiKey?: stri
     }
   }
 
-  return { startSearch, nextPage, lookupAccessions, enaFiles, enaRunFiles };
+  async function linkedIds(fromDb: string, toDb: string, id: string) {
+    const payload = await eutils('elink.fcgi', { dbfrom: fromDb, db: toDb, id });
+    return ((payload?.linksets?.[0]?.linksetdbs || []) as Array<{ links: string[] }>).flatMap((item) => item.links);
+  }
+
+  /** What NCBI itself links to a paper: its title, SRA runs, and BioProject accessions. */
+  async function pubmedLinks(pmid: string) {
+    const summary = await eutils('esummary.fcgi', { db: 'pubmed', id: pmid });
+    const article = summary?.result?.[pmid];
+    if (!article || article.error) throw new SourceError(`PubMed ID ${pmid} was not found.`, 404);
+    const sraIds = await linkedIds('pubmed', 'sra', pmid);
+    const runs = sraIds.length ? parseSummaryResponse(await eutils('esummary.fcgi', { db: 'sra', id: sraIds.slice(0, BATCH_SIZE).join(',') }, 'POST')) : [];
+    const projectIds = await linkedIds('pubmed', 'bioproject', pmid);
+    const projects = projectIds.length
+      ? Object.values<any>((await eutils('esummary.fcgi', { db: 'bioproject', id: projectIds.slice(0, 50).join(',') }))?.result || {}).map((item) => item?.project_acc).filter((item): item is string => typeof item === 'string')
+      : [];
+    return { title: String(article.title || ''), journal: String(article.fulljournalname || article.source || ''), year: String(article.pubdate || '').slice(0, 4), runs, projects };
+  }
+
+  return { startSearch, nextPage, lookupAccessions, enaFiles, enaRunFiles, pubmedLinks };
 }

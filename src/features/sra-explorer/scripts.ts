@@ -125,6 +125,8 @@ export function buildManifest(files: DownloadFile[], runs: RunSummary[]) {
 
 export function buildMetadataRows(runs: RunSummary[], files: DownloadFile[]) {
   const byAccession = new Map(runs.map((run) => [run.accession, run]));
+  // seqout annotation columns only appear when some run was added from the Discover page.
+  const annotated = runs.some((run) => run.annotations && Object.keys(run.annotations).length);
   return runs.flatMap((run) => {
     const runFiles = files.filter((file) => file.accession === run.accession);
     const fastq = runFiles.filter((file) => file.representation === 'fastq');
@@ -153,15 +155,18 @@ export function buildMetadataRows(runs: RunSummary[], files: DownloadFile[]) {
       fastq_md5: fastqFile?.md5 || '',
       fastq_size_bytes: fastqFile?.size || '',
       original_urls: originals.map((file) => file.url).join(';'),
+      ...(annotated ? Object.fromEntries(ANNOTATION_COLUMNS.map((key) => [`seqout_${key}`, run.annotations?.[key] || ''])) : {}),
     }));
   });
 }
 
+const ANNOTATION_COLUMNS = ['sample_title', 'tissue', 'cell_type', 'disease', 'treatment', 'sex', 'age', 'cell_line', 'development_stage'] as const;
+
 export type MetadataFormat = 'tsv' | 'csv' | 'json' | 'yaml';
 
-export function serializeMetadata(rows: ReturnType<typeof buildMetadataRows>, format: MetadataFormat) {
+export function serializeMetadata(rows: Array<Record<string, unknown>>, format: MetadataFormat) {
   if (format === 'json') return JSON.stringify(rows, null, 2) + '\n';
-  const columns = Object.keys(rows[0] || { accession: '' }) as Array<keyof (typeof rows)[number]>;
+  const columns = Object.keys(rows[0] || { accession: '' });
   if (format === 'yaml') return rows.map((row) => columns.map((column, index) => `${index ? '  ' : '- '}${column}: ${JSON.stringify(row[column])}`).join('\n')).join('\n') + '\n';
   if (format === 'csv') {
     const cell = (value: unknown) => { const text = String(value); return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; };

@@ -7,14 +7,14 @@ import { buildDownloadScript, buildMetadataRows, serializeMetadata } from '../sr
 import { formatBases, niceFilename } from '../src/features/sra-explorer/format.ts';
 import type { DownloadFile, RunSummary } from '../src/features/sra-explorer/types.ts';
 
-const expxml = `<Summary><Title>Nanopore Direct-RNA Sequence rep1 raw fast5</Title><Platform instrument_model="GridION">OXFORD_NANOPORE</Platform><Statistics total_runs="1"/></Summary><Experiment acc="SRX9347134" ver="1"/><Study acc="SRP182578" name="x"/><Organism taxid="3694" ScientificName="Populus trichocarpa"/><Library_descriptor><LIBRARY_STRATEGY>RNA-Seq</LIBRARY_STRATEGY><LIBRARY_SOURCE>TRANSCRIPTOMIC</LIBRARY_SOURCE><LIBRARY_LAYOUT><SINGLE/></LIBRARY_LAYOUT></Library_descriptor><Bioproject>PRJNA517295</Bioproject><Biosample>SAMN10824325</Biosample>`;
+const expxml = `<Summary><Title>Nanopore Direct-RNA Sequence rep1 raw fast5</Title><Platform instrument_model="GridION">OXFORD_NANOPORE</Platform><Statistics total_runs="1"/></Summary><Experiment acc="SRX9347134" ver="1"/><Study acc="SRP182578" name="x"/><Organism taxid="3694" ScientificName="Populus trichocarpa"/><Sample acc="SRS4295403" name=""/><Library_descriptor><LIBRARY_STRATEGY>RNA-Seq</LIBRARY_STRATEGY><LIBRARY_SOURCE>TRANSCRIPTOMIC</LIBRARY_SOURCE><LIBRARY_LAYOUT><SINGLE/></LIBRARY_LAYOUT></Library_descriptor><Bioproject>PRJNA517295</Bioproject><Biosample>SAMN10824325</Biosample>`;
 
 test('parses run metadata from an esummary payload', () => {
   const runs = parseSummaryResponse({ result: { uids: ['1'], '1': { expxml, runs: '<Run acc="SRR12881185" total_spots="725156" total_bases="613276147"/>', createdate: '2020/10/23' } } });
   assert.deepEqual(runs, [{
     accession: 'SRR12881185', title: 'Nanopore Direct-RNA Sequence rep1 raw fast5', platform: 'GridION', totalBases: 613276147, createdAt: '2020/10/23',
     project: 'PRJNA517295', organism: 'Populus trichocarpa', strategy: 'RNA-Seq', source: 'TRANSCRIPTOMIC', layout: 'SINGLE',
-    experiment: 'SRX9347134', study: 'SRP182578', biosample: 'SAMN10824325', spots: 725156,
+    experiment: 'SRX9347134', study: 'SRP182578', biosample: 'SAMN10824325', sample: 'SRS4295403', spots: 725156,
   }]);
 });
 

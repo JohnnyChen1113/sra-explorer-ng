@@ -20,6 +20,10 @@ FASTQ/SRA files come from ENA and load quickly; Original submitted files need NC
 | `SRA_API_TOKENS` | Comma-separated bearer tokens exempt from the anonymous rate limit. |
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` (or `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`) | Shares the anonymous rate limit across serverless instances through Upstash Redis. Without them each instance counts separately. |
 
+## Discover page (beta)
+
+`/discover` adds dataset discovery on top of the Explorer without changing it. It uses the [seqout](https://seqout.org) API (Saket Lab, IIT Bombay) from the browser for relevance-ranked search across GEO, SRA, ENA, ArrayExpress, DDBJ and GSA, paper lookup by PubMed ID, and AI-extracted sample annotations (tissue, cell type, disease…). Run lists and download files still come live from NCBI/ENA, and the page keeps working without seqout. Runs added there join the same collection, and their annotations appear as `seqout_*` metadata columns.
+
 ## Development
 
 ```bash

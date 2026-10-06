@@ -2,15 +2,14 @@
 
 import { Check, ChevronDown, LoaderCircle, Search, ShoppingBasket, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { toast } from 'sonner';
 
 import { CollectionWorkspace } from './collection';
+import { useCollection } from './use-collection';
 import { browserSources } from './browser-sources';
 import { dedupeRuns, layoutLabel } from './format';
 import { RunTable, sortRuns, type SortKey, type SortState } from './run-table';
 import type { RunSummary, SearchCursor } from './types';
 
-const COLLECTION_KEY = 'sra-explorer-collection';
 const EXAMPLES = ['SRR12881185', 'PRJNA517295', 'GSE30567', 'human liver miRNA'];
 
 type Facet = 'organism' | 'strategy' | 'layout' | 'platform';
@@ -39,28 +38,18 @@ export function ExplorerPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [collection, setCollection] = useState<RunSummary[]>([]);
-  const [collectionReady, setCollectionReady] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [workspaceExpanded, setWorkspaceExpanded] = useState(false);
+  const { collection, saved, add: addRuns, replace: setCollection, remove: removeRun } = useCollection(() => setWorkspaceOpen(true));
   const resultsRef = useRef<HTMLElement>(null);
   const lastToggled = useRef<number | null>(null);
   const requestId = useRef(0);
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(COLLECTION_KEY) || '[]');
-      if (Array.isArray(saved)) setCollection(saved);
-    } catch {}
-    setCollectionReady(true);
     // Lets end-to-end tests wait until React handles clicks.
     document.documentElement.dataset.hydrated = 'true';
   }, []);
 
-  useEffect(() => {
-    if (!collectionReady) return;
-    try { localStorage.setItem(COLLECTION_KEY, JSON.stringify(collection)); } catch {}
-  }, [collection, collectionReady]);
 
   const runSearch = useCallback(async (term: string, nextCursor: SearchCursor | null = null) => {
     const id = ++requestId.current;
@@ -128,7 +117,6 @@ export function ExplorerPage() {
     return sortRuns(filtered, sort);
   }, [filter, facets, runs, sort]);
 
-  const saved = useMemo(() => new Set(collection.map((run) => run.accession)), [collection]);
   const filtersActive = Boolean(filter.trim()) || FACETS.some(({ key }) => facets[key]);
 
   function toggle(accession: string, index: number, range: boolean) {
@@ -158,14 +146,8 @@ export function ExplorerPage() {
   }
 
   function addToCollection(additions: RunSummary[]) {
-    if (!additions.length) return;
-    const fresh = additions.filter((run) => !saved.has(run.accession)).length;
-    setCollection((current) => dedupeRuns(current, additions));
+    addRuns(additions);
     setSelected(new Set());
-    toast.success(fresh ? `Added ${fresh} run${fresh === 1 ? '' : 's'} to the collection` : 'Already in the collection', {
-      description: fresh < additions.length && fresh ? `${additions.length - fresh} were already saved.` : undefined,
-      action: { label: 'Open', onClick: () => setWorkspaceOpen(true) },
-    });
   }
 
   function onSort(key: SortKey) {
@@ -250,7 +232,7 @@ export function ExplorerPage() {
         onClose={closeWorkspace}
         onToggleSize={() => setWorkspaceExpanded((value) => !value)}
         onReplace={setCollection}
-        onRemove={(accession) => setCollection((current) => current.filter((run) => run.accession !== accession))}
+        onRemove={removeRun}
       />
     </div>
   );
