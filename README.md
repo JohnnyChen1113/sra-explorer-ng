@@ -4,6 +4,8 @@ Production URL: <https://sra.ai2paper.com>
 
 A modern SRA search and download workspace rebuilt with TanStack Start and deployed on Vercel. Modified and maintained by Junhao Chen.
 
+Like the original SRA Explorer, the web page queries NCBI E-utilities and ENA directly from the visitor's browser, so each visitor uses their own NCBI quota. The only thing the page asks this site's server for is **Original submitted files**, because NCBI's Run Browser does not allow cross-origin browser requests. The same NCBI/ENA code (`src/features/sra-explorer/core/`) also powers the server-side public API and MCP endpoint.
+
 It searches NCBI SRA in explicit batches of 500, keeps accumulated results in a virtualized table, and discovers NCBI **Original submitted files**, ENA FASTQ, and normalized `.sra` files. Instrument-native FAST5/POD5 or PacBio files appear when the submitter deposited them.
 
 Searches are shareable (`/?q=PRJNA517295`). Loaded runs can be filtered by organism, library strategy, layout, and instrument, sorted by any column, and range-selected with Shift-click. The collection workspace lists saved runs (removable, with undo), caches file lookups in the browser, flags runs whose NCBI/ENA lookup failed instead of reporting them as having no files, and generates portable Linux/macOS download scripts (curl, axel, Aspera, fastq-dl, Kingfisher) with MD5 checks.

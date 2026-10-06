@@ -2,7 +2,9 @@ import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Clipboard, ClipboardPa
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
-import { readError, useCollectionFiles, type CollectionFilesState } from './file-cache';
+import { browserSources } from './browser-sources';
+import { extractAccessions } from './core/sources';
+import { useCollectionFiles, type CollectionFilesState } from './file-cache';
 import { dedupeRuns, formatBases, formatBytes, layoutLabel, ncbiRunUrl, niceFilename } from './format';
 import { buildDownloadScript, buildFetchngsIds, buildManifest, buildMetadataRows, buildNfcoreSamplesheet, buildUrlList, FETCHNGS_COMMAND, methodsFor, representationLabels, serializeMetadata, toolCommands, type DownloadMethod, type MetadataFormat } from './scripts';
 import type { DownloadFile, RunSummary } from './types';
@@ -289,8 +291,6 @@ function BulkToolDetails({ runs }: { runs: RunSummary[] }) {
   </div>;
 }
 
-const ACCESSION_HINT = /\b(?:[SED]R[RXSP]\d{5,}|PRJ[DEN][AB]\d+|SAM[NED][A-Z]?\d+|GS[EM]\d+)\b/gi;
-
 type PasteState = { text: string; message: { tone: 'ok' | 'warn' | 'error'; text: string } | null };
 
 function AddAccessions({ onAdd, collapsible, state: [paste, setPaste] }: { onAdd: (runs: RunSummary[]) => void; collapsible?: boolean; state: [PasteState, React.Dispatch<React.SetStateAction<PasteState>>] }) {
@@ -299,14 +299,12 @@ function AddAccessions({ onAdd, collapsible, state: [paste, setPaste] }: { onAdd
   const { text, message } = paste;
   const setText = (value: string) => setPaste((current) => ({ ...current, text: value }));
   const setMessage = (value: PasteState['message']) => setPaste((current) => ({ ...current, message: value }));
-  const detected = useMemo(() => new Set((text.match(ACCESSION_HINT) || []).map((item) => item.toUpperCase())).size, [text]);
+  const detected = useMemo(() => extractAccessions(text).length, [text]);
 
   async function submit() {
     setBusy(true); setMessage(null);
     try {
-      const response = await fetch('/api/v1/runs/lookup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
-      if (!response.ok) throw new Error(await readError(response));
-      const data = await response.json() as { runs: RunSummary[]; unmatched: string[]; truncated: boolean; total: number };
+      const data = await browserSources.lookupAccessions(extractAccessions(text));
       onAdd(data.runs);
       const parts = [`Added ${data.runs.length.toLocaleString()} runs.`];
       if (data.unmatched.length) parts.push(`Not found: ${data.unmatched.slice(0, 10).join(', ')}${data.unmatched.length > 10 ? ` and ${data.unmatched.length - 10} more` : ''}.`);

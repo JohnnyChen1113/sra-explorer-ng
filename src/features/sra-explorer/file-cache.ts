@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { browserSources } from './browser-sources';
+import { mapWithConcurrency } from './core/limiter';
 import type { DownloadFile, RunFilesResponse, RunSummary } from './types';
 
-// ENA (FASTQ + SRA) answers in ~1 s per run; NCBI's Run Browser, the only source of
-// Original submitted files, takes 2-5 s. They are cached and fetched separately so the
-// slow lookup only runs when someone asks for Original files.
+// ENA (FASTQ + SRA) is queried straight from the browser and answers in ~1 s per run.
+// Original submitted files come from NCBI's Run Browser through our server (no CORS there)
+// and take 2-5 s per run, so they are cached separately and only looked up on demand.
 export type LookupKind = 'ena' | 'original';
 
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const BATCH: Record<LookupKind, number> = { ena: 40, original: 20 };
+const BATCH: Record<LookupKind, number> = { ena: 10, original: 20 };
 const PARALLEL_BATCHES = 3;
 
 type CacheEntry = RunFilesResponse & { fetchedAt: number };
@@ -48,6 +50,7 @@ export async function readError(response: Response) {
 }
 
 async function fetchBatch(kind: LookupKind, accessions: string[], signal: AbortSignal): Promise<RunFilesResponse[]> {
+  if (kind === 'ena') return mapWithConcurrency(accessions, 6, (accession) => browserSources.enaRunFiles(accession));
   for (let attempt = 0; ; attempt += 1) {
     const response = await fetch('/api/v1/files/batch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ accessions, include: [kind] }), signal });
     if (response.status === 429 && attempt < 5) {

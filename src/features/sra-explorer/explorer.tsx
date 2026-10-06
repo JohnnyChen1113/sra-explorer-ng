@@ -5,10 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { CollectionWorkspace } from './collection';
-import { readError } from './file-cache';
+import { browserSources } from './browser-sources';
 import { dedupeRuns, layoutLabel } from './format';
 import { RunTable, sortRuns, type SortKey, type SortState } from './run-table';
-import type { RunSummary, SearchResponse } from './types';
+import type { RunSummary, SearchCursor } from './types';
 
 const COLLECTION_KEY = 'sra-explorer-collection';
 const EXAMPLES = ['SRR12881185', 'PRJNA517295', 'GSE30567', 'human liver miRNA'];
@@ -35,7 +35,7 @@ export function ExplorerPage() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [loaded, setLoaded] = useState(0);
-  const [cursor, setCursor] = useState<string | null>(null);
+  const [cursor, setCursor] = useState<SearchCursor | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -62,7 +62,7 @@ export function ExplorerPage() {
     try { localStorage.setItem(COLLECTION_KEY, JSON.stringify(collection)); } catch {}
   }, [collection, collectionReady]);
 
-  const runSearch = useCallback(async (term: string, nextCursor: string | null = null) => {
+  const runSearch = useCallback(async (term: string, nextCursor: SearchCursor | null = null) => {
     const id = ++requestId.current;
     setLoading(true);
     setError('');
@@ -71,16 +71,14 @@ export function ExplorerPage() {
       setFacets({ organism: '', strategy: '', layout: '', platform: '' }); setFilter(''); lastToggled.current = null;
     }
     try {
-      const params = new URLSearchParams(nextCursor ? { cursor: nextCursor } : { q: term });
-      const response = await fetch(`/api/v1/search?${params}`);
-      if (!response.ok) throw new Error(await readError(response));
-      const data = (await response.json()) as SearchResponse;
+      const start = nextCursor ?? await browserSources.startSearch(term);
+      const page = await browserSources.nextPage(start);
       if (id !== requestId.current) return;
-      setRuns((current) => (nextCursor ? dedupeRuns(current, data.results) : data.results));
-      setTotal(data.total);
-      setLoaded(data.loaded);
-      setCursor(data.nextCursor);
-      setTranslatedQuery(data.query);
+      setRuns((current) => (nextCursor ? dedupeRuns(current, page.results) : page.results));
+      setTotal(start.total);
+      setLoaded(page.cursor?.nextStart ?? start.total);
+      setCursor(page.cursor && page.cursor.nextStart < page.cursor.total ? page.cursor : null);
+      setTranslatedQuery(start.query);
       if (!nextCursor) requestAnimationFrame(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     } catch (cause) {
       if (id === requestId.current) setError(cause instanceof Error ? cause.message : 'Search failed.');

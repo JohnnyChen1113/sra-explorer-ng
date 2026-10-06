@@ -17,14 +17,24 @@ export const runs = Array.from({ length: 6 }, (_, index) => ({
   spots: 1_000_000,
 }));
 
-function enaFiles(accession: string) {
+function enaRow(accession: string) {
   const index = Number(accession.slice(-1));
-  const base = `https://ftp.sra.ebi.ac.uk/vol1/fastq/${accession.slice(0, 6)}/${accession}`;
-  const fastq = index < 4 ? ['_1', '_2'] : [''];
-  return [
-    ...fastq.map((suffix) => ({ accession, representation: 'fastq', filename: `${accession}${suffix}.fastq.gz`, url: `${base}/${accession}${suffix}.fastq.gz`, size: 1_000_000, md5: `md5${index}${suffix}`, format: 'fastq.gz' })),
-    { accession, representation: 'sra', filename: `${accession}.sra`, url: `https://sra-pub-run-odp.s3.amazonaws.com/sra/${accession}/${accession}`, size: null, md5: null, format: 'SRA Normalized' },
-  ];
+  const base = `ftp.sra.ebi.ac.uk/vol1/fastq/${accession.slice(0, 6)}/${accession}`;
+  const suffixes = index < 4 ? ['_1', '_2'] : [''];
+  return {
+    run_accession: accession,
+    fastq_ftp: suffixes.map((suffix) => `${base}/${accession}${suffix}.fastq.gz`).join(';'),
+    fastq_bytes: suffixes.map(() => '1000000').join(';'),
+    fastq_md5: suffixes.map((suffix) => `md5${index}${suffix}`).join(';'),
+    sra_ftp: '', sra_bytes: '', sra_md5: '',
+  };
+}
+
+type Run = (typeof runs)[number];
+
+function esummaryItem(run: Run) {
+  const expxml = `<Summary><Title>${run.title}</Title><Platform instrument_model="${run.platform}">ILLUMINA</Platform></Summary><Experiment acc="${run.experiment}"/><Study acc="${run.study}"/><Organism ScientificName="${run.organism}"/><Library_descriptor><LIBRARY_STRATEGY>${run.strategy}</LIBRARY_STRATEGY><LIBRARY_SOURCE>${run.source}</LIBRARY_SOURCE><LIBRARY_LAYOUT><${run.layout}/></LIBRARY_LAYOUT></Library_descriptor><Bioproject>${run.project}</Bioproject><Biosample>${run.biosample}</Biosample>`;
+  return { expxml, runs: `<Run acc="${run.accession}" total_spots="${run.spots}" total_bases="${run.totalBases}"/>`, createdate: run.createdAt };
 }
 
 function originalFiles(accession: string) {
@@ -33,32 +43,47 @@ function originalFiles(accession: string) {
 
 export type MockOptions = { failOriginalFor?: string[]; emptyEnaFor?: string[]; failEnaFor?: string[] };
 
-/** Mock every API the UI calls so tests never depend on NCBI or ENA. Returns a log of file-batch requests. */
+/**
+ * Mock NCBI E-utilities and ENA (called directly by the browser) plus our Original-file
+ * endpoint, so tests never depend on the real archives.
+ */
 export async function mockApi(page: Page, options: MockOptions = {}) {
   const fileRequests: Array<{ accessions: string[]; include: string[] }> = [];
+  const enaRequests: string[] = [];
   let failOriginal = new Set(options.failOriginalFor || []);
   let emptyEna = new Set(options.emptyEnaFor || []);
   let failEna = new Set(options.failEnaFor || []);
-  await page.route('**/api/v1/search?*', async (route: Route) => {
-    const q = new URL(route.request().url()).searchParams.get('q') || '';
-    const results = q === 'nothing' ? [] : runs;
-    await route.fulfill({ json: { query: `${q}[All Fields]`, total: results.length, loaded: results.length, batchSize: 500, results, nextCursor: null, source: 'NCBI E-utilities' } });
+
+  await page.route('https://eutils.ncbi.nlm.nih.gov/**', async (route: Route) => {
+    const request = route.request();
+    const params = new URLSearchParams(request.method() === 'POST' ? request.postData() || '' : new URL(request.url()).search);
+    if (request.url().includes('esearch.fcgi')) {
+      const term = params.get('term') || '';
+      const matched = term === 'nothing' ? [] : request.method() === 'POST' ? runs.filter((run) => term.includes(run.accession)) : runs;
+      await route.fulfill({ json: { esearchresult: { count: String(matched.length), webenv: 'WEBENV', querykey: matched.map((run) => run.accession).join(',') || 'none', querytranslation: `${term}[All Fields]` } } });
+      return;
+    }
+    const wanted = (params.get('query_key') || '').split(',');
+    const items = runs.filter((run) => wanted.includes(run.accession));
+    await route.fulfill({ json: { result: { uids: items.map((_, index) => String(index)), ...Object.fromEntries(items.map((run, index) => [String(index), esummaryItem(run)])) } } });
   });
+
+  await page.route('https://www.ebi.ac.uk/ena/portal/api/**', async (route) => {
+    const accession = new URL(route.request().url()).searchParams.get('accession') || '';
+    enaRequests.push(accession);
+    if (failEna.has(accession)) return route.fulfill({ status: 500, body: 'ENA error' });
+    await route.fulfill({ json: [emptyEna.has(accession) ? { run_accession: accession, fastq_ftp: '', sra_ftp: '' } : enaRow(accession)] });
+  });
+
   await page.route('**/api/v1/files/batch', async (route) => {
     const body = route.request().postDataJSON() as { accessions: string[]; include: string[] };
     fileRequests.push(body);
     const results = body.accessions.map((accession) => {
-      if (body.include.includes('original') && failOriginal.has(accession)) return { accession, files: [], sources: [], checked: ['original'], errors: ['Original files unknown: NCBI Run Browser returned HTTP 503'] };
-      if (body.include.includes('ena') && failEna.has(accession)) return { accession, files: [], sources: [], checked: ['ena'], errors: ['FASTQ/SRA list unknown: ENA Portal API returned HTTP 500'] };
-      const files = body.include.includes('original') ? originalFiles(accession) : emptyEna.has(accession) ? [] : enaFiles(accession);
-      return { accession, files, sources: [], checked: body.include, errors: [] };
+      if (failOriginal.has(accession)) return { accession, files: [], sources: [], checked: ['original'], errors: ['Original files unknown: NCBI Run Browser returned HTTP 503'] };
+      return { accession, files: originalFiles(accession), sources: [], checked: ['original'], errors: [] };
     });
     await route.fulfill({ json: { results } });
   });
-  await page.route('**/api/v1/runs/lookup', async (route) => {
-    const { text } = route.request().postDataJSON() as { text: string };
-    const found = runs.filter((run) => text.includes(run.accession));
-    await route.fulfill({ json: { accessions: [], runs: found, unmatched: text.includes('SRR999999') ? ['SRR999999'] : [], truncated: false, total: found.length } });
-  });
-  return { fileRequests, healOriginal: () => { failOriginal = new Set(); }, healEna: () => { emptyEna = new Set(); failEna = new Set(); } };
+
+  return { fileRequests, enaRequests, healOriginal: () => { failOriginal = new Set(); }, healEna: () => { emptyEna = new Set(); failEna = new Set(); } };
 }

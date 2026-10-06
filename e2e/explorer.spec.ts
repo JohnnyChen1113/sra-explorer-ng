@@ -63,10 +63,12 @@ test('collection looks up ENA first and NCBI Original files only on demand', asy
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('6 FASTQ').first()).toBeHidden();
   await expect(dialog.getByText('Original: not checked')).toHaveCount(6);
-  expect(api.fileRequests.every((request) => request.include.join() === 'ena')).toBe(true);
+  expect(api.fileRequests).toHaveLength(0);
 
   await dialog.getByRole('button', { name: /^FASTQ/ }).click();
   await expect(dialog.getByText('10 FASTQ files', { exact: true })).toBeVisible();
+  expect(new Set(api.enaRequests).size).toBe(6);
+  expect(api.fileRequests).toHaveLength(0);
   await expect(dialog.locator('pre').first()).toContainText("md5_check 'md50_1'");
   await dialog.getByRole('button', { name: 'aspera' }).click();
   await expect(dialog.locator('pre').first()).toContainText('era-fasp@fasp.sra.ebi.ac.uk:/vol1/fastq/SRR100/SRR100000/SRR100000_1.fastq.gz');
