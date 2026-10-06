@@ -106,7 +106,7 @@ export function CollectionWorkspace({ open, expanded, runs, onClose, onToggleSiz
         <nav className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[#dce6eb] bg-[#f8fafb] px-5 py-2">
           {tabs.map(([value, label, count]) => <button key={value} onClick={() => setTab(value)} className={`rounded-lg px-3 py-1.5 text-sm font-bold ${tab === value ? 'bg-[#071b2f] text-white' : 'text-[#405563] hover:bg-white'}`}>{label}{count !== null ? <span className={`ml-1.5 rounded-full px-1.5 text-[11px] ${tab === value ? 'bg-white/20' : 'bg-[#e3eaee]'}`}>{count}</span> : null}</button>)}
         </nav>
-        <LookupStatus state={state} total={runs.length} />
+        <LookupStatus state={state} total={runs.length} showErrors={tab === 'runs' || tab === 'metadata' || tab === 'tools'} />
         <div className="min-h-0 flex-1 overflow-y-auto p-5 lg:p-7">
           {tab === 'runs' ? <AddAccessions collapsible state={paste} onAdd={(added) => onReplace(dedupeRuns(runs, added))} /> : null}
           {tab === 'runs' ? <CollectionRuns runs={runs} state={state} onCheckOriginal={() => setWantOriginal(true)} onRemove={(accession) => {
@@ -116,14 +116,14 @@ export function CollectionWorkspace({ open, expanded, runs, onClose, onToggleSiz
           }} />
             : tab === 'metadata' ? <FullMetadata runs={runs} files={state.files} originalsChecked={wantOriginal && state.lookups.original.done === runs.length} onCheckOriginal={() => setWantOriginal(true)} />
             : tab === 'tools' ? <BulkToolDetails runs={runs} />
-            : <BulkFileDownloads key={tab} representation={tab} files={state.files} runs={runs} onRecheck={(accessions) => state.recheck(tab === 'original' ? 'original' : 'ena', accessions)} complete={(() => { const lookup = state.lookups[tab === 'original' ? 'original' : 'ena']; return lookup.done === runs.length && !lookup.loading; })()} />}
+            : <BulkFileDownloads key={tab} representation={tab} files={state.files} runs={runs} failed={new Set(state.failed.filter((result) => result.checked?.includes(tab === 'original' ? 'original' : 'ena')).map((result) => result.accession))} onRetry={state.retryFailed} onRecheck={(accessions) => state.recheck(tab === 'original' ? 'original' : 'ena', accessions)} complete={(() => { const lookup = state.lookups[tab === 'original' ? 'original' : 'ena']; return lookup.done === runs.length && !lookup.loading; })()} />}
         </div>
       </> : <div className="flex-1 overflow-y-auto p-5 lg:p-7"><div className="py-6 text-center"><ShoppingBasket className="mx-auto size-10 text-[#9ab0bc]" /><div className="mt-4 font-bold">No saved runs yet</div><p className="mx-auto mt-1 max-w-sm text-sm text-[#607286]">Select search results and add them here, paste a list of accessions below, or import a previously exported collection JSON.</p></div><AddAccessions state={paste} onAdd={(added) => onReplace(dedupeRuns(runs, added))} /></div>}
     </aside>
   </div>;
 }
 
-function LookupStatus({ state, total }: { state: CollectionFilesState; total: number }) {
+function LookupStatus({ state, total, showErrors }: { state: CollectionFilesState; total: number; showErrors: boolean }) {
   const active = (['ena', 'original'] as const).filter((kind) => state.lookups[kind].requested && (state.lookups[kind].loading || state.lookups[kind].done < total) && !state.lookups[kind].error);
   const errors = (['ena', 'original'] as const).map((kind) => state.lookups[kind].error).filter(Boolean);
   return <>
@@ -135,7 +135,7 @@ function LookupStatus({ state, total }: { state: CollectionFilesState; total: nu
         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e3eaee]"><div className="h-full rounded-full bg-[#087f8c] transition-[width]" style={{ width: `${(done / total) * 100}%` }} /></div>
       </div>;
     })}
-    {errors.length || state.failed.length ? <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[#efd998] bg-[#fff4cf] px-5 py-2 text-xs text-[#72530a]">
+    {showErrors && (errors.length || state.failed.length) ? <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[#efd998] bg-[#fff4cf] px-5 py-2 text-xs text-[#72530a]">
       <AlertTriangle className="size-4" />
       <span>{errors[0] || `${state.failed.length} lookups did not complete (NCBI or ENA did not answer). Affected runs may be missing files.`}</span>
       <button onClick={state.retryFailed} className="ml-auto inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 font-bold"><RotateCw className="size-3" /> Retry</button>
@@ -184,7 +184,7 @@ function CollectionRuns({ runs, state, onRemove, onCheckOriginal }: { runs: RunS
   </div>;
 }
 
-function BulkFileDownloads({ representation, files, runs, complete, onRecheck }: { representation: DownloadFile['representation']; files: DownloadFile[]; runs: RunSummary[]; complete: boolean; onRecheck: (accessions: string[]) => void }) {
+function BulkFileDownloads({ representation, files, runs, complete, failed, onRecheck, onRetry }: { representation: DownloadFile['representation']; files: DownloadFile[]; runs: RunSummary[]; complete: boolean; failed: Set<string>; onRecheck: (accessions: string[]) => void; onRetry: () => void }) {
   const methods = methodsFor(representation);
   const [rename, setRename] = useState(representation !== 'original');
   const [verifyMd5, setVerifyMd5] = useState(true);
@@ -199,7 +199,7 @@ function BulkFileDownloads({ representation, files, runs, complete, onRecheck }:
   const totalSize = selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0);
   const runsWithFiles = new Set(selectedFiles.map((file) => file.accession)).size;
   const missingSizes = selectedFiles.filter((file) => !file.size).length;
-  const withoutFiles = complete && representation === 'fastq' ? runs.filter((run) => !selectedFiles.some((file) => file.accession === run.accession)).map((run) => run.accession) : [];
+  const withoutFiles = complete && representation === 'fastq' ? runs.filter((run) => !failed.has(run.accession) && !selectedFiles.some((file) => file.accession === run.accession)).map((run) => run.accession) : [];
 
   const methodNote: Partial<Record<DownloadMethod, string>> = {
     aspera: 'Aspera (ascp) is usually much faster than HTTPS for ENA FASTQ. Install IBM Aspera Connect or the ascp CLI; set ASPERA_KEY if your key lives elsewhere.',
@@ -213,6 +213,11 @@ function BulkFileDownloads({ representation, files, runs, complete, onRecheck }:
       {representation === 'original' ? ' Original files are whatever the submitter uploaded (FAST5, POD5, BAM, …) and can be very large.' : ''}
       {!complete ? ' Lookups still running; this list will grow.' : ''}
     </div>
+    {failed.size ? <div className="flex flex-wrap items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-800">
+      <AlertTriangle className="size-4" />
+      <span className="min-w-0 flex-1"><strong>{failed.size} runs could not be checked</strong> because {representation === 'original' ? 'NCBI' : 'ENA'} did not answer, so their files are missing from this list: {[...failed].slice(0, 12).join(', ')}{failed.size > 12 ? ` and ${failed.size - 12} more` : ''}.</span>
+      <button onClick={onRetry} className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 font-bold"><RotateCw className="size-3" /> Retry</button>
+    </div> : null}
     {withoutFiles.length ? <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#efd998] bg-[#fff4cf] px-4 py-2 text-xs text-[#72530a]">
       <span className="min-w-0 flex-1"><strong>{withoutFiles.length} runs have no FASTQ in ENA</strong> and are not in this script: {withoutFiles.slice(0, 12).join(', ')}{withoutFiles.length > 12 ? ` and ${withoutFiles.length - 12} more` : ''}. They may not be mirrored yet (use the SRA tab), or ENA answered incompletely.</span>
       <button onClick={() => onRecheck(withoutFiles)} className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 font-bold"><RotateCw className="size-3" /> Re-check</button>
@@ -245,7 +250,7 @@ function BulkFileDownloads({ representation, files, runs, complete, onRecheck }:
         {selectedFiles.slice(0, 2000).map((file) => <div key={`${file.accession}-${file.url}`} className="grid gap-1 border-t border-[#edf2f4] px-4 py-2.5 text-xs sm:grid-cols-[120px_1fr_auto]"><span className="font-mono font-bold text-[#087f8c]">{file.accession}</span><span className="min-w-0 break-all font-semibold">{rename ? niceFilename(file, byAccession) : file.filename}<span className="ml-2 font-normal text-[#607286]">{file.md5 ? `MD5 ${file.md5}` : 'No MD5'}</span></span><span className="text-[#607286]">{formatBytes(file.size)}</span></div>)}
         {selectedFiles.length > 2000 ? <div className="border-t border-[#edf2f4] px-4 py-2.5 text-xs text-[#607286]">Showing the first 2,000 files; the script and manifest include all {selectedFiles.length}.</div> : null}
       </details>
-    </> : complete ? <div className="rounded-xl bg-[#e0f4f4] p-4 text-sm text-[#07535b]">No {labels.title} files were found for this collection.{representation === 'fastq' ? ' Runs that ENA has not mirrored only offer normalized SRA; see the SRA tab.' : ''}</div> : null}
+    </> : complete && !failed.size ? <div className="rounded-xl bg-[#e0f4f4] p-4 text-sm text-[#07535b]">No {labels.title} files were found for this collection.{representation === 'fastq' ? ' Runs that ENA has not mirrored only offer normalized SRA; see the SRA tab.' : ''}</div> : null}
   </div>;
 }
 

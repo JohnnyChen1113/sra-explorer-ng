@@ -85,12 +85,12 @@ test('failed Original lookups are reported and can be retried', async ({ page })
   await page.getByRole('button', { name: /6\s*saved/ }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: /^Original files/ }).click();
-  await expect(dialog.getByText(/1 lookups did not complete/)).toBeVisible();
+  await expect(dialog.getByText('1 runs could not be checked')).toBeVisible();
   await expect(dialog.getByText('1 Original submitted files', { exact: true })).toBeVisible();
   api.healOriginal();
   await dialog.getByRole('button', { name: 'Retry' }).click();
   await expect(dialog.getByText('2 Original submitted files', { exact: true })).toBeVisible();
-  await expect(dialog.getByText(/lookups did not complete/)).toBeHidden();
+  await expect(dialog.getByText(/could not be checked/)).toBeHidden();
 });
 
 test('runs can be removed with undo, and accession lists can be pasted', async ({ page }) => {
@@ -142,4 +142,20 @@ test('runs without FASTQ are listed and can be re-checked', async ({ page }) => 
   await dialog.getByRole('button', { name: 'Re-check' }).click();
   await expect(dialog.getByText('10 FASTQ files', { exact: true })).toBeVisible();
   await expect(dialog.getByText(/runs have no FASTQ/)).toBeHidden();
+});
+
+test('an ENA outage is reported as a failed lookup, not as missing FASTQ', async ({ page }) => {
+  const api = await mockApi(page, { failEnaFor: ['SRR100001'] });
+  await open(page, '/?q=liver');
+  await page.getByRole('checkbox', { name: 'Select all visible results' }).click();
+  await page.getByRole('button', { name: 'Add 6 to collection' }).click();
+  await page.getByRole('button', { name: /6\s*saved/ }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: /^FASTQ/ }).click();
+  await expect(dialog.getByText('1 runs could not be checked')).toBeVisible();
+  await expect(dialog.getByText(/runs have no FASTQ/)).toBeHidden();
+  api.healEna();
+  await dialog.getByRole('button', { name: 'Retry' }).first().click();
+  await expect(dialog.getByText('10 FASTQ files', { exact: true })).toBeVisible();
+  await expect(dialog.getByText(/could not be checked/)).toBeHidden();
 });

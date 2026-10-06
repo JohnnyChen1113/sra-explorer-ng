@@ -31,13 +31,14 @@ function originalFiles(accession: string) {
   return Number(accession.slice(-1)) >= 4 ? [{ accession, representation: 'original', filename: 'reads.pod5', url: `https://sra-pub-src-1.s3.amazonaws.com/${accession}/reads.pod5`, size: 50_000_000_000, md5: 'pod5md5', format: 'nanopore' }] : [];
 }
 
-export type MockOptions = { failOriginalFor?: string[]; emptyEnaFor?: string[] };
+export type MockOptions = { failOriginalFor?: string[]; emptyEnaFor?: string[]; failEnaFor?: string[] };
 
 /** Mock every API the UI calls so tests never depend on NCBI or ENA. Returns a log of file-batch requests. */
 export async function mockApi(page: Page, options: MockOptions = {}) {
   const fileRequests: Array<{ accessions: string[]; include: string[] }> = [];
   let failOriginal = new Set(options.failOriginalFor || []);
   let emptyEna = new Set(options.emptyEnaFor || []);
+  let failEna = new Set(options.failEnaFor || []);
   await page.route('**/api/v1/search?*', async (route: Route) => {
     const q = new URL(route.request().url()).searchParams.get('q') || '';
     const results = q === 'nothing' ? [] : runs;
@@ -48,6 +49,7 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     fileRequests.push(body);
     const results = body.accessions.map((accession) => {
       if (body.include.includes('original') && failOriginal.has(accession)) return { accession, files: [], sources: [], checked: ['original'], errors: ['Original files unknown: NCBI Run Browser returned HTTP 503'] };
+      if (body.include.includes('ena') && failEna.has(accession)) return { accession, files: [], sources: [], checked: ['ena'], errors: ['FASTQ/SRA list unknown: ENA Portal API returned HTTP 500'] };
       const files = body.include.includes('original') ? originalFiles(accession) : emptyEna.has(accession) ? [] : enaFiles(accession);
       return { accession, files, sources: [], checked: body.include, errors: [] };
     });
@@ -58,5 +60,5 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     const found = runs.filter((run) => text.includes(run.accession));
     await route.fulfill({ json: { accessions: [], runs: found, unmatched: text.includes('SRR999999') ? ['SRR999999'] : [], truncated: false, total: found.length } });
   });
-  return { fileRequests, healOriginal: () => { failOriginal = new Set(); }, healEna: () => { emptyEna = new Set(); } };
+  return { fileRequests, healOriginal: () => { failOriginal = new Set(); }, healEna: () => { emptyEna = new Set(); failEna = new Set(); } };
 }
