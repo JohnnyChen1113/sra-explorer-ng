@@ -1,5 +1,6 @@
 import type { DownloadFile, RunFilesResponse } from '../types';
 import { assertRunAccession, parseAttributes } from './common.ts';
+import { upstreamFetch } from './upstream.ts';
 
 const NCBI_RUN = 'https://trace.ncbi.nlm.nih.gov/Traces/sra-db-be/run_new';
 const ENA_FILES = 'https://www.ebi.ac.uk/ena/portal/api/filereport';
@@ -29,8 +30,9 @@ function splitField(value: string | undefined) {
 async function getNcbiOriginal(accession: string) {
   const url = new URL(NCBI_RUN);
   url.searchParams.set('acc', accession);
-  const response = await fetch(url, { headers: { accept: 'application/xml' } });
-  if (!response.ok) return { files: [] as DownloadFile[], project: '' };
+  const response = await upstreamFetch('trace', url, { headers: { accept: 'application/xml' } }, 'NCBI Run Browser');
+  if (response.status === 404) return { files: [] as DownloadFile[], project: '' };
+  if (!response.ok) throw new Error(`NCBI Run Browser returned HTTP ${response.status}`);
   const xml = await response.text();
   const project = xml.match(/\bPRJ[A-Z]+\d+\b/i)?.[0]?.toUpperCase() || parseAttributes(xml.match(/<STUDY_REF\b([^>]*)/i)?.[1] || '').accession || '';
   return { files: parseOriginalFiles(xml, accession), project };
@@ -48,9 +50,13 @@ async function getEnaFiles(accession: string) {
   url.searchParams.set('accession', accession);
   url.searchParams.set('format', 'json');
   url.searchParams.set('fields', 'fastq_ftp,fastq_bytes,fastq_md5,sra_ftp,sra_bytes,sra_md5');
-  const response = await fetch(url, { headers: { accept: 'application/json' } });
-  if (!response.ok) return [];
-  const rows = (await response.json()) as Array<Record<string, string>>;
+  const response = await upstreamFetch('ena', url, { headers: { accept: 'application/json' } }, 'ENA Portal API');
+  // ENA answers 204/empty for runs it has not mirrored (e.g. some NCBI-only data).
+  if (response.status === 204 || response.status === 404) return [];
+  if (!response.ok) throw new Error(`ENA Portal API returned HTTP ${response.status}`);
+  const text = await response.text();
+  if (!text.trim()) return [];
+  const rows = JSON.parse(text) as Array<Record<string, string>>;
   const files: DownloadFile[] = [];
   for (const row of rows) {
     const fastqUrls = splitField(row.fastq_ftp);
@@ -64,7 +70,12 @@ async function getEnaFiles(accession: string) {
 
 export async function getRunFiles(rawAccession: string): Promise<RunFilesResponse> {
   const accession = assertRunAccession(rawAccession);
-  const [original, ena] = await Promise.all([getNcbiOriginal(accession), getEnaFiles(accession)]);
+  const errors: string[] = [];
+  const [originalResult, enaResult] = await Promise.allSettled([getNcbiOriginal(accession), getEnaFiles(accession)]);
+  const original = originalResult.status === 'fulfilled' ? originalResult.value : { files: [] as DownloadFile[], project: '' };
+  const ena = enaResult.status === 'fulfilled' ? enaResult.value : [];
+  if (originalResult.status === 'rejected') errors.push(`Original files unknown: ${originalResult.reason instanceof Error ? originalResult.reason.message : 'NCBI lookup failed'}`);
+  if (enaResult.status === 'rejected') errors.push(`FASTQ/SRA list unknown: ${enaResult.reason instanceof Error ? enaResult.reason.message : 'ENA lookup failed'}`);
   const normalized = ena.some((file) => file.representation === 'sra') ? [] : [{
     accession,
     representation: 'sra' as const,
@@ -74,5 +85,5 @@ export async function getRunFiles(rawAccession: string): Promise<RunFilesRespons
     md5: null,
     format: 'SRA Normalized',
   }];
-  return { accession, project: original.project, files: [...original.files, ...ena, ...normalized].map((file) => ({ ...file, project: original.project })), sources: ['NCBI Run Browser', 'ENA Portal API', 'NCBI SRA Cloud'] };
+  return { accession, project: original.project, files: [...original.files, ...ena, ...normalized].map((file) => ({ ...file, project: original.project })), sources: ['NCBI Run Browser', 'ENA Portal API', 'NCBI SRA Cloud'], errors };
 }

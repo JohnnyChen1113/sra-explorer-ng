@@ -3,6 +3,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { enforceAccess, optionsResponse, withAccessHeaders } from '@/features/sra-explorer/server/access';
 import { getRunFiles } from '@/features/sra-explorer/server/files';
 import { searchSra } from '@/features/sra-explorer/server/ncbi';
+import { shellQuote } from '@/features/sra-explorer/format';
 
 const protocolVersion = '2025-06-18';
 
@@ -27,7 +28,7 @@ async function callTool(name: string, args: Record<string, string>) {
   if (name === 'get_run_files') return getRunFiles(args.accession || '');
   if (name === 'create_download_manifest') {
     const result = await getRunFiles(args.accession || '');
-    return { ...result, commands: result.files.map((file) => `curl -L --retry 5 '${file.url}' -o '${file.filename}'`) };
+    return { ...result, commands: result.files.map((file) => `curl -L --fail --retry 5 ${shellQuote(file.url)} -o ${shellQuote(file.filename)}`) };
   }
   throw new Error(`Unknown tool: ${name}`);
 }

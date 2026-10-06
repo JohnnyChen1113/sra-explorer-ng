@@ -6,7 +6,9 @@ A modern SRA search and download workspace rebuilt with TanStack Start and deplo
 
 It searches NCBI SRA in explicit batches of 500, keeps accumulated results in a virtualized table, and discovers NCBI **Original submitted files**, ENA FASTQ, and normalized `.sra` files. Instrument-native FAST5/POD5 or PacBio files appear when the submitter deposited them.
 
-The collection workspace opens without navigation, uses a 52% panel by default, expands to 80%, and closes through the backdrop or Escape while preserving search state.
+Searches are shareable (`/?q=PRJNA517295`). Loaded runs can be filtered by organism, library strategy, layout, and instrument, sorted by any column, and range-selected with Shift-click. The collection workspace lists saved runs (removable, with undo), caches file lookups in the browser, flags runs whose NCBI/ENA lookup failed instead of reporting them as having no files, and generates portable Linux/macOS download scripts (curl, axel, Aspera, fastq-dl, Kingfisher) with MD5 checks.
+
+Set `NCBI_API_KEY` on the server to raise the NCBI E-utilities limit from 3 to 10 requests per second.
 
 ## Development
 

@@ -1,9 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
 
-import { normalizeLocale } from '@/config/site';
-import { TermsPage } from '@/features/landing/site';
-import { getLocale } from '@/paraglide/runtime.js';
+import { TermsPage } from '@/features/sra-explorer/legal';
 
 export const Route = createFileRoute('/terms')({
-  component: () => <TermsPage locale={normalizeLocale(getLocale())} />,
+  head: () => ({ meta: [{ title: 'Terms — SRA Explorer NG' }] }),
+  component: TermsPage,
 });

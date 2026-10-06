@@ -5,6 +5,14 @@ export type RunSummary = {
   totalBases: number;
   createdAt: string;
   project?: string;
+  organism?: string;
+  strategy?: string;
+  source?: string;
+  layout?: string;
+  experiment?: string;
+  study?: string;
+  biosample?: string;
+  spots?: number;
 };
 
 export type SearchCursor = {
@@ -42,4 +50,7 @@ export type RunFilesResponse = {
   files: DownloadFile[];
   sources: string[];
   project?: string;
+  /** Upstream lookups that failed; an empty file list is only trustworthy when this is empty. */
+  errors?: string[];
+  error?: string;
 };

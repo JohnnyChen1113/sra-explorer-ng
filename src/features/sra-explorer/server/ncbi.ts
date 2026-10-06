@@ -1,7 +1,8 @@
 import { Buffer } from 'node:buffer';
 
 import type { RunSummary, SearchCursor, SearchResponse } from '../types';
-import { BATCH_SIZE, decodeXml, parseAttributes } from './common';
+import { BATCH_SIZE, decodeXml, parseAttributes } from './common.ts';
+import { ncbiApiKey, upstreamFetch, UpstreamError } from './upstream.ts';
 
 const EUTILS = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/';
 
@@ -21,12 +22,21 @@ function decodeCursor(value: string): SearchCursor {
 
 async function ncbiJson(path: string, params: Record<string, string>) {
   const url = new URL(path, EUTILS);
-  Object.entries({ ...params, retmode: 'json', tool: 'sra_explorer_ng' }).forEach(([key, value]) =>
+  const apiKey = ncbiApiKey();
+  Object.entries({ ...params, retmode: 'json', tool: 'sra_explorer_ng', ...(apiKey ? { api_key: apiKey } : {}) }).forEach(([key, value]) =>
     url.searchParams.set(key, value),
   );
-  const response = await fetch(url, { headers: { accept: 'application/json' } });
+  let response: Response;
+  try {
+    response = await upstreamFetch('eutils', url, { headers: { accept: 'application/json' } }, 'NCBI E-utilities');
+  } catch (error) {
+    throw new Response(error instanceof UpstreamError ? `${error.message}. NCBI may be busy; try again shortly.` : 'NCBI request failed.', { status: 502 });
+  }
   if (!response.ok) throw new Response(`NCBI returned ${response.status}.`, { status: 502 });
-  return response.json() as Promise<any>;
+  const payload = await response.json() as any;
+  const message = payload?.esearchresult?.ERROR || payload?.error;
+  if (message) throw new Response(`NCBI: ${message}`, { status: 502 });
+  return payload;
 }
 
 function textBetween(xml: string, tag: string) {
@@ -39,10 +49,13 @@ export function parseSummaryResponse(payload: any): RunSummary[] {
   const root = payload?.result || {};
   for (const [key, value] of Object.entries<any>(root)) {
     if (key === 'uids' || !value?.runs) continue;
-    const title = textBetween(value.expxml || '', 'Title') || 'Untitled SRA run';
-    const platformMatch = String(value.expxml || '').match(/<Platform\b([^>]*)\/?\s*>/i);
-    const platform = parseAttributes(platformMatch?.[1] || '').instrument_model || 'Unknown';
-    const project = textBetween(value.expxml || '', 'Bioproject') || parseAttributes(String(value.expxml || '').match(/<Study\b([^>]*)/i)?.[1] || '').acc || '';
+    const expxml = String(value.expxml || '');
+    const tagAttrs = (tag: string) => parseAttributes(expxml.match(new RegExp(`<${tag}\\b([^>]*)`, 'i'))?.[1] || '');
+    const title = textBetween(expxml, 'Title') || 'Untitled SRA run';
+    const platform = tagAttrs('Platform').instrument_model || 'Unknown';
+    const study = tagAttrs('Study').acc || '';
+    const project = textBetween(expxml, 'Bioproject') || study;
+    const layout = expxml.match(/<LIBRARY_LAYOUT>\s*<(\w+)/i)?.[1]?.toUpperCase() || '';
     const runPattern = /<Run\b([^>]*)\/?\s*>/gi;
     let runMatch: RegExpExecArray | null;
     while ((runMatch = runPattern.exec(value.runs)) !== null) {
@@ -55,6 +68,14 @@ export function parseSummaryResponse(payload: any): RunSummary[] {
         totalBases: Number(attrs.total_bases) || 0,
         createdAt: value.createdate || '',
         project,
+        organism: tagAttrs('Organism').ScientificName || '',
+        strategy: textBetween(expxml, 'LIBRARY_STRATEGY'),
+        source: textBetween(expxml, 'LIBRARY_SOURCE'),
+        layout,
+        experiment: tagAttrs('Experiment').acc || '',
+        study,
+        biosample: textBetween(expxml, 'Biosample'),
+        spots: Number(attrs.total_spots) || 0,
       });
     }
   }

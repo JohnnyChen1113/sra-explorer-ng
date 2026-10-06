@@ -77,7 +77,7 @@ function RootComponent() {
       disableTransitionOnChange
     >
       <Outlet />
-      <Toaster position="top-center" richColors />
+      <Toaster position="bottom-right" richColors />
     </ThemeProvider>
   );
 }

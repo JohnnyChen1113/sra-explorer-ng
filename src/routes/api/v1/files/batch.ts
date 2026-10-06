@@ -1,9 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router';
 
 import { enforceAccess, optionsResponse, withAccessHeaders } from '@/features/sra-explorer/server/access';
+import { mapWithConcurrency } from '@/features/sra-explorer/server/upstream';
 import { getRunFiles } from '@/features/sra-explorer/server/files';
 
-const MAX_BATCH = 20;
+const MAX_BATCH = 50;
 
 export const Route = createFileRoute('/api/v1/files/batch')({
   server: {
@@ -16,10 +17,10 @@ export const Route = createFileRoute('/api/v1/files/batch')({
             return withAccessHeaders(Response.json({ error: `Provide 1-${MAX_BATCH} run accessions.` }, { status: 400 }), access);
           }
           const accessions = [...new Set(body.accessions.map(String))];
-          const results = await Promise.all(accessions.map(async (accession) => {
+          const results = await mapWithConcurrency(accessions, 16, async (accession) => {
             try { return await getRunFiles(accession); }
             catch (error) { return { accession, files: [], sources: [], error: error instanceof Error ? error.message : 'Lookup failed.' }; }
-          }));
+          });
           return withAccessHeaders(Response.json({ results }), access);
         } catch (error) {
           return error instanceof Response ? error : Response.json({ error: 'Batch lookup failed.' }, { status: 500 });
