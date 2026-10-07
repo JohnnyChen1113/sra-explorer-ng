@@ -79,10 +79,15 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
   });
 
   await page.route('https://www.ebi.ac.uk/ena/portal/api/**', async (route) => {
-    const accession = new URL(route.request().url()).searchParams.get('accession') || '';
-    enaRequests.push(accession);
-    if (failEna.has(accession)) return route.fulfill({ status: 500, body: 'ENA error' });
-    await route.fulfill({ json: [emptyEna.has(accession) ? { run_accession: accession, fastq_ftp: '', sra_ftp: '' } : enaRow(accession)] });
+    const request = route.request();
+    // Single-run filereport (GET ?accession=) or bulk search (POST includeAccessions=a,b,c).
+    const accessions = request.method() === 'POST'
+      ? (new URLSearchParams(request.postData() || '').get('includeAccessions') || '').split(',').filter(Boolean)
+      : [new URL(request.url()).searchParams.get('accession') || ''];
+    enaRequests.push(...accessions);
+    if (accessions.some((accession) => failEna.has(accession))) return route.fulfill({ status: 500, body: 'ENA error' });
+    // ENA omits runs it has no files for.
+    await route.fulfill({ json: accessions.filter((accession) => !emptyEna.has(accession)).map(enaRow) });
   });
 
   await page.route('**/api/v1/files/batch', async (route) => {

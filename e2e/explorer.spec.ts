@@ -75,7 +75,7 @@ test('collection looks up ENA first and NCBI Original files only on demand', asy
   await dialog.getByRole('button', { name: 'aspera' }).click();
   await expect(dialog.locator('pre').first()).toContainText('era-fasp@fasp.sra.ebi.ac.uk:/vol1/fastq/SRR100/SRR100000/SRR100000_1.fastq.gz');
 
-  await dialog.getByRole('button', { name: /^Original files/ }).click();
+  await dialog.getByRole('button', { name: /^Original/ }).click();
   await expect(dialog.getByText('2 Original submitted files', { exact: true })).toBeVisible();
   expect(api.fileRequests.some((request) => request.include.join() === 'original')).toBe(true);
   await expect(dialog.locator('pre').first()).toContainText('reads.pod5');
@@ -88,7 +88,7 @@ test('failed Original lookups are reported and can be retried', async ({ page })
   await page.getByRole('button', { name: 'Add 6 to collection' }).click();
   await page.getByRole('button', { name: /6\s*saved/ }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByRole('button', { name: /^Original files/ }).click();
+  await dialog.getByRole('button', { name: /^Original/ }).click();
   await expect(dialog.getByText('1 runs could not be checked')).toBeVisible();
   await expect(dialog.getByText('1 Original submitted file', { exact: true })).toBeVisible();
   api.healOriginal();
@@ -118,7 +118,7 @@ test('download tools offer nf-core/fetchngs ids.csv', async ({ page }) => {
   await rows(page).nth(0).click();
   await page.getByRole('button', { name: 'Add 1 to collection' }).click();
   await page.getByRole('button', { name: /1\s*saved/ }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Download tools' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Tools', exact: true }).click();
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: /ids\.csv/ }).click();
   expect((await download).suggestedFilename()).toBe('ids.csv');
@@ -156,10 +156,34 @@ test('an ENA outage is reported as a failed lookup, not as missing FASTQ', async
   await page.getByRole('button', { name: /6\s*saved/ }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: /^FASTQ/ }).click();
-  await expect(dialog.getByText('1 runs could not be checked')).toBeVisible();
+  // A bulk ENA request covers the whole batch, so one outage affects every run in it.
+  await expect(dialog.getByText('6 runs could not be checked')).toBeVisible();
   await expect(dialog.getByText(/runs have no FASTQ/)).toBeHidden();
   api.healEna();
   await dialog.getByRole('button', { name: 'Retry' }).first().click();
   await expect(dialog.getByText('10 FASTQ files', { exact: true })).toBeVisible();
   await expect(dialog.getByText(/could not be checked/)).toBeHidden();
+});
+
+test('the MD5 tab lists every checksum and exports an md5sum file', async ({ page }) => {
+  await mockApi(page);
+  await open(page, '/?q=liver');
+  await rows(page).nth(0).click();
+  await rows(page).nth(4).click({ modifiers: ['Shift'] });
+  await page.getByRole('button', { name: 'Add 5 to collection' }).click();
+  await page.getByRole('button', { name: /5\s*saved/ }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'MD5', exact: true }).click();
+  await expect(dialog.getByText('md50_1', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('md54', { exact: true })).toBeVisible();
+  await dialog.getByLabel('Filter checksums').fill('SRR100002');
+  await expect(dialog.getByRole('button', { name: /^Copy MD5 of/ })).toHaveCount(2);
+  const download = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'fastq-files.md5' }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toBe('fastq-files.md5');
+  const { readFile } = await import('node:fs/promises');
+  const text = await readFile((await file.path())!, 'utf8');
+  expect(text.split('\n').filter(Boolean)).toHaveLength(9);
+  expect(text).toContain('md50_1  SRR100000_1.fastq.gz');
 });

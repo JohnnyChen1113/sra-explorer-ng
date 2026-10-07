@@ -78,3 +78,14 @@ test('extracts accessions from free text', async () => {
   const { extractAccessions } = await import('../src/features/sra-explorer/server/ncbi.ts');
   assert.deepEqual(extractAccessions('Data: PRJNA517295 (runs srr12881185, SRR12881185; GSE30567), SAMN10824325 and ERP009109.'), ['PRJNA517295', 'SRR12881185', 'GSE30567', 'SAMN10824325', 'ERP009109']);
 });
+
+test('bulk ENA rows are grouped per run and unknown runs get no files', async () => {
+  const { parseEnaBulkRows } = await import('../src/features/sra-explorer/core/sources.ts');
+  const byRun = parseEnaBulkRows([
+    { run_accession: 'SRR2', fastq_ftp: 'ftp.sra.ebi.ac.uk/vol1/fastq/SRR2/SRR2_1.fastq.gz;ftp.sra.ebi.ac.uk/vol1/fastq/SRR2/SRR2_2.fastq.gz', fastq_md5: 'aaa;bbb', fastq_bytes: '10;20', sra_ftp: '' },
+    { run_accession: 'SRR9', fastq_ftp: 'x/SRR9.fastq.gz', fastq_md5: 'zzz' },
+  ], ['SRR1', 'SRR2']);
+  assert.deepEqual([...byRun.keys()], ['SRR1', 'SRR2']);
+  assert.deepEqual(byRun.get('SRR1'), []);
+  assert.deepEqual(byRun.get('SRR2')!.map((file) => [file.filename, file.md5, file.size]), [['SRR2_1.fastq.gz', 'aaa', 10], ['SRR2_2.fastq.gz', 'bbb', 20]]);
+});

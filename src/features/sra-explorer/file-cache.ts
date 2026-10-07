@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { browserSources } from './browser-sources';
-import { mapWithConcurrency } from './core/limiter';
 import type { DownloadFile, RunFilesResponse, RunSummary } from './types';
 
 // ENA (FASTQ + SRA) is queried straight from the browser and answers in ~1 s per run.
@@ -10,7 +9,8 @@ import type { DownloadFile, RunFilesResponse, RunSummary } from './types';
 export type LookupKind = 'ena' | 'original';
 
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const BATCH: Record<LookupKind, number> = { ena: 10, original: 20 };
+// ENA answers a bulk request of a few hundred runs in seconds; NCBI needs small batches.
+const BATCH: Record<LookupKind, number> = { ena: 250, original: 20 };
 const PARALLEL_BATCHES = 3;
 
 type CacheEntry = RunFilesResponse & { fetchedAt: number };
@@ -50,7 +50,7 @@ export async function readError(response: Response) {
 }
 
 async function fetchBatch(kind: LookupKind, accessions: string[], signal: AbortSignal): Promise<RunFilesResponse[]> {
-  if (kind === 'ena') return mapWithConcurrency(accessions, 6, (accession) => browserSources.enaRunFiles(accession));
+  if (kind === 'ena') return browserSources.enaRunFilesBulk(accessions);
   for (let attempt = 0; ; attempt += 1) {
     const response = await fetch('/api/v1/files/batch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ accessions, include: [kind] }), signal });
     if (response.status === 429 && attempt < 5) {

@@ -11,6 +11,10 @@ export const MAX_LOOKUP_RUNS = 5000;
 
 const EUTILS = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/';
 const ENA_FILES = 'https://www.ebi.ac.uk/ena/portal/api/filereport';
+const ENA_SEARCH = 'https://www.ebi.ac.uk/ena/portal/api/search';
+const ENA_FIELDS = 'run_accession,fastq_ftp,fastq_bytes,fastq_md5,sra_ftp,sra_bytes,sra_md5';
+/** ENA answers up to 500 runs per bulk request in a few seconds. */
+export const ENA_BULK_SIZE = 500;
 const ACCESSION_PATTERN = /\b(?:[SED]R[RXSP]\d{5,}|PRJ[DEN][AB]\d+|SAM[NED][A-Z]?\d+|GS[EM]\d+)\b/gi;
 
 export type Service = 'eutils' | 'ena';
@@ -89,6 +93,16 @@ export function parseEnaRows(rows: Array<Record<string, string>>, accession: str
   return files;
 }
 
+/** Group bulk ENA rows by run; runs ENA does not know (e.g. not mirrored yet) get no files. */
+export function parseEnaBulkRows(rows: Array<Record<string, string>>, accessions: string[]) {
+  const byRun = new Map<string, DownloadFile[]>(accessions.map((accession) => [accession, []]));
+  rows.forEach((row) => {
+    const accession = row.run_accession;
+    if (accession && byRun.has(accession)) byRun.get(accession)!.push(...parseEnaRows([row], accession));
+  });
+  return byRun;
+}
+
 /** NCBI's public cloud copy of the normalized run, used when ENA lists no .sra file. */
 export function cloudSraFile(accession: string): DownloadFile {
   return { accession, representation: 'sra', filename: `${accession}.sra`, url: `https://sra-pub-run-odp.s3.amazonaws.com/sra/${accession}/${accession}`, size: null, md5: null, format: 'SRA Normalized' };
@@ -153,13 +167,35 @@ export function createSources(fetcher: Fetcher, { apiKey = '' }: { apiKey?: stri
 
   async function enaFiles(accession: string): Promise<DownloadFile[]> {
     const url = new URL(ENA_FILES);
-    url.search = new URLSearchParams({ result: 'read_run', accession, format: 'json', fields: 'fastq_ftp,fastq_bytes,fastq_md5,sra_ftp,sra_bytes,sra_md5' }).toString();
+    url.search = new URLSearchParams({ result: 'read_run', accession, format: 'json', fields: ENA_FIELDS }).toString();
     const response = await fetcher('ena', url, { headers: { accept: 'application/json' } }, 'ENA Portal API');
     // ENA answers 204/empty for runs it has not mirrored (e.g. some NCBI-only data).
     if (response.status === 204 || response.status === 404) return [];
     if (!response.ok) throw new Error(`ENA Portal API returned HTTP ${response.status}`);
     const text = await response.text();
     return text.trim() ? parseEnaRows(JSON.parse(text) as Array<Record<string, string>>, accession) : [];
+  }
+
+  /** FASTQ + SRA files for up to 500 runs in one ENA request. Throws if ENA does not answer. */
+  async function enaBulkFiles(accessions: string[]) {
+    const unique = [...new Set(accessions)].slice(0, ENA_BULK_SIZE);
+    const body = new URLSearchParams({ result: 'read_run', includeAccessions: unique.join(','), fields: ENA_FIELDS, format: 'json', limit: '0' });
+    const response = await fetcher('ena', new URL(ENA_SEARCH), { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: body.toString() }, 'ENA Portal API');
+    if (response.status === 204) return parseEnaBulkRows([], unique);
+    if (!response.ok) throw new Error(`ENA Portal API returned HTTP ${response.status}`);
+    const text = await response.text();
+    return parseEnaBulkRows(text.trim() ? JSON.parse(text) as Array<Record<string, string>> : [], unique);
+  }
+
+  /** Bulk version of enaRunFiles: one request for up to 500 runs, failures reported per run. */
+  async function enaRunFilesBulk(accessions: string[]): Promise<RunFilesResponse[]> {
+    try {
+      const byRun = await enaBulkFiles(accessions);
+      return [...byRun].map(([accession, files]) => ({ accession, files: files.some((file) => file.representation === 'sra') ? files : [...files, cloudSraFile(accession)], sources: ['ENA Portal API', 'NCBI SRA Cloud'], checked: ['ena'], errors: [] }));
+    } catch (error) {
+      const message = `FASTQ/SRA list unknown: ${error instanceof Error ? error.message : 'ENA lookup failed'}`;
+      return [...new Set(accessions)].map((accession) => ({ accession, files: [cloudSraFile(accession)], sources: ['NCBI SRA Cloud'], checked: ['ena'], errors: [message] }));
+    }
   }
 
   /** FASTQ + SRA for one run; failures are reported in `errors` instead of looking like "no files". */
@@ -191,5 +227,5 @@ export function createSources(fetcher: Fetcher, { apiKey = '' }: { apiKey?: stri
     return { title: String(article.title || ''), journal: String(article.fulljournalname || article.source || ''), year: String(article.pubdate || '').slice(0, 4), runs, projects };
   }
 
-  return { startSearch, nextPage, lookupAccessions, enaFiles, enaRunFiles, pubmedLinks };
+  return { startSearch, nextPage, lookupAccessions, enaFiles, enaRunFiles, enaBulkFiles, enaRunFilesBulk, pubmedLinks };
 }

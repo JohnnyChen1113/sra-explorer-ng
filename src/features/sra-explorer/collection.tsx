@@ -9,7 +9,7 @@ import { dedupeRuns, formatBases, formatBytes, layoutLabel, ncbiRunUrl, niceFile
 import { buildDownloadScript, buildFetchngsIds, buildManifest, buildMetadataRows, buildNfcoreSamplesheet, buildUrlList, FETCHNGS_COMMAND, methodsFor, representationLabels, serializeMetadata, toolCommands, type DownloadMethod, type MetadataFormat } from './scripts';
 import type { DownloadFile, RunSummary } from './types';
 
-type Tab = 'runs' | 'fastq' | 'sra' | 'original' | 'metadata' | 'tools';
+type Tab = 'runs' | 'fastq' | 'sra' | 'original' | 'md5' | 'metadata' | 'tools';
 
 type Props = {
   open: boolean;
@@ -86,9 +86,10 @@ export function CollectionWorkspace({ open, expanded, runs, onClose, onToggleSiz
     ['runs', 'Runs', runs.length],
     ['fastq', 'FASTQ', counts.fastq],
     ['sra', 'SRA', counts.sra],
-    ['original', 'Original files', wantOriginal ? counts.original : null],
+    ['original', 'Original', wantOriginal ? counts.original : null],
+    ['md5', 'MD5', null],
     ['metadata', 'Metadata', null],
-    ['tools', 'Download tools', null],
+    ['tools', 'Tools', null],
   ];
 
   return <div className="fixed inset-0 z-50 bg-[#04121f]/45 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -108,7 +109,7 @@ export function CollectionWorkspace({ open, expanded, runs, onClose, onToggleSiz
         <nav className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-[#dce6eb] bg-[#f8fafb] px-5 py-2">
           {tabs.map(([value, label, count]) => <button key={value} onClick={() => setTab(value)} className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-bold ${tab === value ? 'bg-[#071b2f] text-white' : 'text-[#405563] hover:bg-white'}`}>{label}{count !== null ? <span className={`ml-1.5 rounded-full px-1.5 text-[11px] ${tab === value ? 'bg-white/20' : 'bg-[#e3eaee]'}`}>{count}</span> : null}</button>)}
         </nav>
-        <LookupStatus state={state} total={runs.length} showErrors={tab === 'runs' || tab === 'metadata' || tab === 'tools'} />
+        <LookupStatus state={state} total={runs.length} showErrors={tab === 'runs' || tab === 'md5' || tab === 'metadata' || tab === 'tools'} />
         <div className="min-h-0 flex-1 overflow-y-auto p-5 lg:p-7">
           {tab === 'runs' ? <AddAccessions collapsible state={paste} onAdd={(added) => onReplace(dedupeRuns(runs, added))} /> : null}
           {tab === 'runs' ? <CollectionRuns runs={runs} state={state} onCheckOriginal={() => setWantOriginal(true)} onRemove={(accession) => {
@@ -116,6 +117,7 @@ export function CollectionWorkspace({ open, expanded, runs, onClose, onToggleSiz
             onRemove(accession);
             if (run) toast(`Removed ${accession}`, { action: { label: 'Undo', onClick: () => onReplace([...runs]) } });
           }} />
+            : tab === 'md5' ? <Md5List files={state.files} runs={runs} onCheckOriginal={() => setWantOriginal(true)} />
             : tab === 'metadata' ? <FullMetadata runs={runs} files={state.files} originalsChecked={wantOriginal && state.lookups.original.done === runs.length} onCheckOriginal={() => setWantOriginal(true)} />
             : tab === 'tools' ? <BulkToolDetails runs={runs} />
             : <BulkFileDownloads key={tab} representation={tab} files={state.files} runs={runs} failed={new Set(state.failed.filter((result) => result.checked?.includes(tab === 'original' ? 'original' : 'ena')).map((result) => result.accession))} onRetry={state.retryFailed} onRecheck={(accessions) => state.recheck(tab === 'original' ? 'original' : 'ena', accessions)} complete={(() => { const lookup = state.lookups[tab === 'original' ? 'original' : 'ena']; return lookup.done === runs.length && !lookup.loading; })()} />}
@@ -361,4 +363,40 @@ function OptionToggle({ checked, onChange, label, hint }: { checked: boolean; on
     <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-0.5 accent-[#087f8c]" />
     <span className="min-w-0"><span className="block text-sm font-bold text-[#071b2f]">{label}</span><span className="block text-xs leading-5 text-[#607286] [overflow-wrap:anywhere]">{hint}</span></span>
   </label>;
+}
+
+const MD5_KINDS: Array<[DownloadFile['representation'], string]> = [['fastq', 'FASTQ'], ['sra', 'SRA'], ['original', 'Original']];
+
+/** Every file's checksum at a glance, copyable one by one or as an md5sum file. */
+function Md5List({ files, runs, onCheckOriginal }: { files: DownloadFile[]; runs: RunSummary[]; onCheckOriginal: () => void }) {
+  const [kind, setKind] = useState<DownloadFile['representation']>('fastq');
+  const [filter, setFilter] = useState('');
+  const order = useMemo(() => new Map(runs.map((run, index) => [run.accession, index])), [runs]);
+  const all = useMemo(() => files.filter((file) => file.representation === kind).sort((a, b) => (order.get(a.accession) ?? 0) - (order.get(b.accession) ?? 0) || a.filename.localeCompare(b.filename)), [files, kind, order]);
+  const needle = filter.trim().toLowerCase();
+  const visible = needle ? all.filter((file) => `${file.accession} ${file.filename} ${file.md5 || ''}`.toLowerCase().includes(needle)) : all;
+  const withMd5 = all.filter((file) => file.md5);
+  const md5File = withMd5.map((file) => `${file.md5}  ${file.filename}`).join('\n') + (withMd5.length ? '\n' : '');
+  const stem = representationLabels[kind].stem;
+
+  return <div className="space-y-4">
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="flex rounded-lg border border-[#dce6eb] bg-white p-0.5" role="group" aria-label="File type">
+        {MD5_KINDS.map(([value, label]) => <button key={value} onClick={() => { setKind(value); if (value === 'original') onCheckOriginal(); }} aria-pressed={kind === value} className={`rounded-md px-3 py-1.5 text-xs font-black ${kind === value ? 'bg-[#071b2f] text-white' : 'text-[#405563] hover:bg-[#f2f6f8]'}`}>{label}</button>)}
+      </div>
+      <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Find a run, file or checksum" aria-label="Filter checksums" className="min-w-[180px] flex-1 rounded-lg border border-[#dce6eb] bg-white px-3 py-1.5 text-sm outline-none focus:border-[#087f8c]" />
+      <button disabled={!withMd5.length} onClick={() => void copyText(`${withMd5.length} checksums`, md5File)} className={button}><Clipboard className="size-4" /> Copy all</button>
+      <button disabled={!withMd5.length} onClick={() => downloadText(`${stem}.md5`, md5File)} className={primaryButton}><FileDown className="size-4" /> {stem}.md5</button>
+    </div>
+    {withMd5.length ? <p className="text-xs text-[#607286]">The .md5 file uses md5sum format: put it next to the downloaded files and run <code className="rounded bg-white px-1">md5sum -c {stem}.md5</code>. On macOS, either install coreutils or tick “Verify MD5 checksums” in the download script.</p> : null}
+    {visible.length ? <div className="overflow-hidden rounded-2xl border border-[#dce6eb] bg-white">
+      {visible.slice(0, 3000).map((file) => <div key={`${file.accession}-${file.url}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-0.5 border-b border-[#edf2f4] px-4 py-2 last:border-0 md:grid-cols-[minmax(0,1fr)_auto_auto]">
+        <span className="min-w-0" title={file.filename}><span className="block truncate text-xs font-semibold">{file.filename}</span><span className="block text-[11px] text-[#9ab0bc]">{file.accession} · {formatBytes(file.size)}</span></span>
+        <code className={`select-all whitespace-nowrap text-xs max-md:col-span-2 max-md:row-start-2 ${file.md5 ? 'text-[#071b2f]' : 'text-[#9ab0bc]'}`} title={file.md5 || 'The archive provides no checksum for this file'}>{file.md5 || 'no MD5 provided'}</code>
+        {file.md5 ? <button onClick={() => void copyText('MD5', file.md5!)} className="rounded-md p-1.5 max-md:col-start-2 max-md:row-start-1 text-[#607286] hover:bg-[#f2f6f8] hover:text-[#071b2f]" title={`Copy MD5 of ${file.filename}`} aria-label={`Copy MD5 of ${file.filename}`}><Clipboard className="size-3.5" /></button> : <span />}
+      </div>)}
+      {visible.length > 3000 ? <div className="px-4 py-2.5 text-xs text-[#607286]">Showing the first 3,000 files; Copy all and the .md5 file include every checksum.</div> : null}
+    </div> : <div className="rounded-xl bg-[#e0f4f4] p-4 text-sm text-[#07535b]">{needle ? `No ${MD5_KINDS.find(([value]) => value === kind)?.[1]} files match “${filter}”.` : kind === 'sra' ? 'ENA rarely publishes checksums for normalized SRA files; the SRA Toolkit verifies them itself.' : `No ${MD5_KINDS.find(([value]) => value === kind)?.[1]} files found yet.`}</div>}
+    {all.length && withMd5.length < all.length ? <p className="text-xs text-[#9a5b00]">{all.length - withMd5.length} of {all.length} files have no published checksum and are left out of Copy all and the .md5 file.</p> : null}
+  </div>;
 }
