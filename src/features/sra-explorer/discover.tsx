@@ -4,7 +4,7 @@ import { BookOpen, Check, ChevronDown, ChevronUp, ExternalLink, FlaskConical, Lo
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { browserSources } from './browser-sources';
-import { CollectionWorkspace } from './collection';
+import { ClearSavedButton, CollectionWorkspace } from './collection';
 import { extractAccessions } from './core/sources';
 import { formatBases, layoutLabel, ncbiRunUrl } from './format';
 import { projectOf, projectsForPaper, sampleAnnotations, searchProjects, seqoutProjectUrl, sraStudiesFor, type SeqoutCursor, type SeqoutFilters, type SeqoutProject } from './seqout';
@@ -141,6 +141,7 @@ export function DiscoverPage() {
           <button onClick={() => setWorkspaceOpen(true)} className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-[#c7f36b] px-3.5 py-2 text-sm font-bold text-[#071b2f] transition hover:bg-[#b5e45a] max-md:ml-auto">
             <ShoppingBasket className="size-4" /> {collection.collection.length}<span className="max-sm:hidden">saved</span>
           </button>
+          <ClearSavedButton count={collection.collection.length} onClear={collection.clear} />
         </div>
       </header>
 

@@ -3,7 +3,7 @@
 import { Check, ChevronDown, LoaderCircle, Search, ShoppingBasket, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { CollectionWorkspace } from './collection';
+import { ClearSavedButton, CollectionWorkspace } from './collection';
 import { useCollection } from './use-collection';
 import { browserSources } from './browser-sources';
 import { dedupeRuns, layoutLabel, plural } from './format';
@@ -40,7 +40,7 @@ export function ExplorerPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [workspaceExpanded, setWorkspaceExpanded] = useState(false);
-  const { collection, saved, add: addRuns, replace: setCollection, remove: removeRun } = useCollection(() => setWorkspaceOpen(true));
+  const { collection, saved, add: addRuns, clear: clearRuns, replace: setCollection, remove: removeRun } = useCollection(() => setWorkspaceOpen(true));
   const resultsRef = useRef<HTMLElement>(null);
   const lastToggled = useRef<number | null>(null);
   const requestId = useRef(0);
@@ -171,6 +171,7 @@ export function ExplorerPage() {
           <button onClick={() => setWorkspaceOpen(true)} className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-[#c7f36b] px-3.5 py-2 text-sm font-bold text-[#071b2f] transition hover:bg-[#b5e45a]">
             <ShoppingBasket className="size-4" /> {collection.length}<span className="max-sm:hidden">saved</span>
           </button>
+          <ClearSavedButton count={collection.length} onClear={clearRuns} />
         </div>
       </header>
 

@@ -36,11 +36,20 @@ export function useCollection(onOpen: () => void) {
     });
   }
 
+  /** Empty the collection in one click; the toast offers an undo in case it was a slip. */
+  function clear() {
+    const previous = collection;
+    if (!previous.length) return;
+    setCollection([]);
+    toast(`Cleared ${previous.length} saved run${previous.length === 1 ? '' : 's'}`, { action: { label: 'Undo', onClick: () => setCollection(previous) } });
+  }
+
   return {
     collection,
     saved,
     ready,
     add,
+    clear,
     replace: setCollection,
     remove: (accession: string) => setCollection((current) => current.filter((run) => run.accession !== accession)),
   };

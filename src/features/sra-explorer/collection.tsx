@@ -400,3 +400,15 @@ function Md5List({ files, runs, onCheckOriginal }: { files: DownloadFile[]; runs
     {all.length && withMd5.length < all.length ? <p className="text-xs text-[#9a5b00]">{all.length - withMd5.length} of {all.length} files have no published checksum and are left out of Copy all and the .md5 file.</p> : null}
   </div>;
 }
+
+/** Header shortcut next to the basket: starts a fresh collection, e.g. when switching projects. */
+export function ClearSavedButton({ count, onClear }: { count: number; onClear: () => void }) {
+  return <button
+    type="button"
+    onClick={onClear}
+    disabled={!count}
+    title={count ? `Remove all ${count} saved runs (can be undone)` : 'Nothing saved yet'}
+    aria-label="Clear saved runs"
+    className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-white/40 bg-white/10 px-3 py-2 text-sm font-bold text-white transition hover:border-red-300 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-transparent disabled:text-white/30"
+  ><Trash2 className="size-4" /><span className="max-sm:hidden">Clear</span></button>;
+}

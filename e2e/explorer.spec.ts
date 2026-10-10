@@ -187,3 +187,22 @@ test('the MD5 tab lists every checksum and exports an md5sum file', async ({ pag
   expect(text.split('\n').filter(Boolean)).toHaveLength(9);
   expect(text).toContain('md50_1  SRR100000_1.fastq.gz');
 });
+
+test('the header Clear button empties the saved runs, with undo', async ({ page }) => {
+  await mockApi(page);
+  await open(page, '/?q=liver');
+  const clear = page.getByRole('button', { name: 'Clear saved runs' });
+  await expect(clear).toBeDisabled();
+  await rows(page).nth(0).click();
+  await rows(page).nth(2).click({ modifiers: ['Shift'] });
+  await page.getByRole('button', { name: 'Add 3 to collection' }).click();
+  await clear.click();
+  await expect(page.getByRole('button', { name: /^0\s*saved/ })).toBeVisible();
+  await expect(page.locator('[role=row]').filter({ hasText: 'Saved' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(page.getByRole('button', { name: /^3\s*saved/ })).toBeVisible();
+  await clear.click();
+  await page.reload();
+  await expect(page.getByRole('button', { name: /^0\s*saved/ })).toBeVisible();
+  await expect(clear).toBeDisabled();
+});
