@@ -4,6 +4,7 @@ import { mockApi, runs } from './fixtures';
 
 type Page = import('@playwright/test').Page;
 const rows = (page: Page) => page.locator('[role=row][aria-selected]');
+const pick = (page: Page, index: number, shift = false) => rows(page).nth(index).getByRole('checkbox').click(shift ? { modifiers: ['Shift'] } : undefined);
 
 async function open(page: Page, path: string) {
   await page.goto(path);
@@ -31,7 +32,8 @@ test('facets, text filter and sorting narrow and order the loaded runs', async (
   await mockApi(page);
   await open(page, '/?q=liver');
   await expect(rows(page)).toHaveCount(6);
-  await page.getByLabel('Filter by Organism').selectOption('Mus musculus');
+  const organisms = page.getByRole('group', { name: 'Filter by Organism' });
+  await organisms.getByRole('checkbox', { name: 'Mus musculus' }).check();
   await expect(rows(page)).toHaveCount(1);
   await page.getByRole('button', { name: 'Reset filters' }).click();
   await page.getByPlaceholder('Filter loaded runs').fill('tumour');
@@ -44,11 +46,11 @@ test('facets, text filter and sorting narrow and order the loaded runs', async (
 test('shift-click selects a range and added runs are marked as saved', async ({ page }) => {
   await mockApi(page);
   await open(page, '/?q=liver');
-  await rows(page).nth(0).click();
-  await rows(page).nth(3).click({ modifiers: ['Shift'] });
+  await pick(page, 0);
+  await pick(page, 3, true);
   await expect(page.locator('[role=row][aria-selected=true]')).toHaveCount(4);
   await page.getByRole('button', { name: 'Add 4 to collection' }).click();
-  await expect(page.getByText('Added 4 runs to the collection')).toBeVisible();
+  await expect(page.getByRole('button', { name: /^4\s*saved/ })).toBeVisible();
   await expect(page.locator('[role=row]').filter({ hasText: 'Saved' })).toHaveCount(4);
   await page.reload();
   await expect(page.locator('[role=row]').filter({ hasText: 'Saved' })).toHaveCount(4);
@@ -115,7 +117,7 @@ test('runs can be removed with undo, and accession lists can be pasted', async (
 test('download tools offer nf-core/fetchngs ids.csv', async ({ page }) => {
   await mockApi(page);
   await open(page, '/?q=liver');
-  await rows(page).nth(0).click();
+  await pick(page, 0);
   await page.getByRole('button', { name: 'Add 1 to collection' }).click();
   await page.getByRole('button', { name: /1\s*saved/ }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Tools', exact: true }).click();
@@ -168,8 +170,8 @@ test('an ENA outage is reported as a failed lookup, not as missing FASTQ', async
 test('the MD5 tab lists every checksum and exports an md5sum file', async ({ page }) => {
   await mockApi(page);
   await open(page, '/?q=liver');
-  await rows(page).nth(0).click();
-  await rows(page).nth(4).click({ modifiers: ['Shift'] });
+  await pick(page, 0);
+  await pick(page, 4, true);
   await page.getByRole('button', { name: 'Add 5 to collection' }).click();
   await page.getByRole('button', { name: /5\s*saved/ }).click();
   const dialog = page.getByRole('dialog');
@@ -193,8 +195,8 @@ test('the header Clear button empties the saved runs, with undo', async ({ page 
   await open(page, '/?q=liver');
   const clear = page.getByRole('button', { name: 'Clear saved runs' });
   await expect(clear).toBeDisabled();
-  await rows(page).nth(0).click();
-  await rows(page).nth(2).click({ modifiers: ['Shift'] });
+  await pick(page, 0);
+  await pick(page, 2, true);
   await page.getByRole('button', { name: 'Add 3 to collection' }).click();
   await clear.click();
   await expect(page.getByRole('button', { name: /^0\s*saved/ })).toBeVisible();
@@ -205,4 +207,52 @@ test('the header Clear button empties the saved runs, with undo', async ({ page 
   await page.reload();
   await expect(page.getByRole('button', { name: /^0\s*saved/ })).toBeVisible();
   await expect(clear).toBeDisabled();
+});
+
+test('organism sidebar: multi-select, "only", and counts that follow other filters', async ({ page }) => {
+  await mockApi(page);
+  await open(page, '/?q=liver');
+  const sidebar = page.getByRole('group', { name: 'Filter by Organism' });
+  await expect(sidebar.getByRole('listitem')).toHaveText([/Homo sapiens\s*only\s*5/, /Mus musculus\s*only\s*1/]);
+  await sidebar.getByRole('checkbox', { name: 'Mus musculus' }).check();
+  await expect(rows(page)).toHaveCount(1);
+  await sidebar.getByRole('checkbox', { name: 'Homo sapiens' }).check();
+  await expect(rows(page)).toHaveCount(6);
+  await sidebar.getByRole('listitem').filter({ hasText: 'Homo sapiens' }).hover();
+  await sidebar.getByRole('button', { name: 'only' }).first().click();
+  await expect(rows(page)).toHaveCount(5);
+  // Counts follow the other filters.
+  await page.getByPlaceholder('Filter loaded runs').fill('tumour');
+  await expect(sidebar.getByRole('listitem').filter({ hasText: 'Homo sapiens' })).toContainText('2');
+  await sidebar.getByRole('button', { name: 'Clear' }).click();
+  await expect(rows(page)).toHaveCount(3);
+  // Select-all then add takes exactly the filtered organism.
+  await page.getByPlaceholder('Filter loaded runs').fill('');
+  await sidebar.getByRole('checkbox', { name: 'Mus musculus' }).check();
+  await page.getByRole('checkbox', { name: 'Select all visible results' }).click();
+  await expect(page.getByRole('button', { name: 'Add 1 to collection' })).toBeVisible();
+});
+
+test('single-species results show no organism sidebar', async ({ page }) => {
+  await mockApi(page);
+  await open(page, '/?q=human');
+  await expect(rows(page)).toHaveCount(5);
+  await expect(page.getByRole('group', { name: 'Filter by Organism' })).toHaveCount(0);
+  await expect(page.getByRole('group', { name: 'Filter by Layout' })).toBeVisible();
+});
+
+test('sidebar filters combine across facets and replace the old dropdowns', async ({ page }) => {
+  await mockApi(page);
+  await open(page, '/?q=liver');
+  await expect(page.locator('select')).toHaveCount(0);
+  const layout = page.getByRole('group', { name: 'Filter by Layout' });
+  const instrument = page.getByRole('group', { name: 'Filter by Instrument' });
+  await layout.getByRole('checkbox', { name: 'Paired' }).check();
+  await expect(rows(page)).toHaveCount(4);
+  // Instrument counts already reflect the Layout choice.
+  await expect(instrument.getByRole('listitem').filter({ hasText: 'MinION' })).toContainText('0');
+  await instrument.getByRole('checkbox', { name: 'MinION' }).check();
+  await expect(rows(page)).toHaveCount(0);
+  await page.getByRole('complementary', { name: 'Filters' }).getByRole('button', { name: 'Reset all' }).click();
+  await expect(rows(page)).toHaveCount(6);
 });

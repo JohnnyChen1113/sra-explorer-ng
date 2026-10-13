@@ -69,7 +69,7 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     }
     if (request.url().includes('esearch.fcgi')) {
       const term = params.get('term') || '';
-      const matched = term === 'nothing' ? [] : request.method() === 'POST' ? runs.filter((run) => term.includes(run.accession)) : runs;
+      const matched = term === 'nothing' ? [] : term === 'human' ? runs.filter((run) => run.organism === 'Homo sapiens') : request.method() === 'POST' ? runs.filter((run) => term.includes(run.accession)) : runs;
       await route.fulfill({ json: { esearchresult: { count: String(matched.length), webenv: 'WEBENV', querykey: matched.map((run) => run.accession).join(',') || 'none', querytranslation: `${term}[All Fields]` } } });
       return;
     }

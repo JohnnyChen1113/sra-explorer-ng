@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, LoaderCircle, Search, ShoppingBasket, X } from 'lucide-react';
+import { Check, ChevronDown, LoaderCircle, Search, ShoppingBasket, SlidersHorizontal, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ClearSavedButton, CollectionWorkspace } from './collection';
@@ -12,13 +12,15 @@ import type { RunSummary, SearchCursor } from './types';
 
 const EXAMPLES = ['SRR12881185', 'PRJNA517295', 'GSE30567', 'human liver miRNA'];
 
+// Sidebar filters: tick any number of values; values within a facet are OR-ed, facets AND-ed.
 type Facet = 'organism' | 'strategy' | 'layout' | 'platform';
-const FACETS: Array<{ key: Facet; label: string }> = [
-  { key: 'organism', label: 'Organism' },
-  { key: 'strategy', label: 'Strategy' },
-  { key: 'layout', label: 'Layout' },
+const FACETS: Array<{ key: Facet; label: string; italic?: boolean; format?: (value: string) => string }> = [
+  { key: 'organism', label: 'Organism', italic: true },
+  { key: 'strategy', label: 'Library strategy' },
+  { key: 'layout', label: 'Layout', format: layoutLabel },
   { key: 'platform', label: 'Instrument' },
 ];
+const noFacets = (): Record<Facet, Set<string>> => ({ organism: new Set(), strategy: new Set(), layout: new Set(), platform: new Set() });
 
 function readQueryFromUrl() {
   return typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('q') || '';
@@ -29,7 +31,7 @@ export function ExplorerPage() {
   const [activeQuery, setActiveQuery] = useState('');
   const [translatedQuery, setTranslatedQuery] = useState('');
   const [filter, setFilter] = useState('');
-  const [facets, setFacets] = useState<Record<Facet, string>>({ organism: '', strategy: '', layout: '', platform: '' });
+  const [facets, setFacets] = useState<Record<Facet, Set<string>>>(noFacets);
   const [sort, setSort] = useState<SortState>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -57,7 +59,7 @@ export function ExplorerPage() {
     setError('');
     if (!nextCursor) {
       setRuns([]); setSelected(new Set()); setCursor(null); setTotal(0); setLoaded(0); setTranslatedQuery('');
-      setFacets({ organism: '', strategy: '', layout: '', platform: '' }); setFilter(''); lastToggled.current = null;
+      setFacets(noFacets()); setFilter(''); lastToggled.current = null;
     }
     try {
       const start = nextCursor ?? await browserSources.startSearch(term);
@@ -97,27 +99,31 @@ export function ExplorerPage() {
     return () => window.removeEventListener('popstate', onPop);
   }, [startSearch]);
 
-  const facetOptions = useMemo(() => {
-    const options = {} as Record<Facet, Array<[string, number]>>;
-    FACETS.forEach(({ key }) => {
-      const counts = new Map<string, number>();
-      runs.forEach((run) => { const value = run[key] || ''; if (value) counts.set(value, (counts.get(value) || 0) + 1); });
-      options[key] = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-    });
-    return options;
-  }, [runs]);
-
-  const visibleRuns = useMemo(() => {
+  const textFiltered = useMemo(() => {
     const needle = filter.trim().toLowerCase();
-    const filtered = runs.filter((run) => {
-      if (FACETS.some(({ key }) => facets[key] && run[key] !== facets[key])) return false;
-      if (!needle) return true;
-      return [run.accession, run.title, run.platform, run.organism, run.strategy, run.source, run.layout, run.project, run.study, run.experiment, run.biosample].join(' ').toLowerCase().includes(needle);
-    });
-    return sortRuns(filtered, sort);
-  }, [filter, facets, runs, sort]);
+    if (!needle) return runs;
+    return runs.filter((run) => [run.accession, run.title, run.platform, run.organism, run.strategy, run.source, run.layout, run.project, run.study, run.experiment, run.biosample].join(' ').toLowerCase().includes(needle));
+  }, [filter, runs]);
 
-  const filtersActive = Boolean(filter.trim()) || FACETS.some(({ key }) => facets[key]);
+  const matchesFacets = useCallback((run: RunSummary, except?: Facet) => FACETS.every(({ key }) => key === except || !facets[key].size || facets[key].has(run[key] || '')), [facets]);
+
+  const visibleRuns = useMemo(() => sortRuns(textFiltered.filter((run) => matchesFacets(run)), sort), [textFiltered, matchesFacets, sort]);
+
+  // Each facet counts the runs that match every *other* filter, so the numbers show what ticking a value would give.
+  const facetSections = useMemo(() => FACETS.map((facet) => {
+    const counts = new Map<string, number>();
+    runs.forEach((run) => counts.set(run[facet.key] || '', 0));
+    textFiltered.forEach((run) => { if (matchesFacets(run, facet.key)) counts.set(run[facet.key] || '', (counts.get(run[facet.key] || '') || 0) + 1); });
+    return { ...facet, counts: [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])) };
+  }).filter((section) => section.counts.length > 1 || facets[section.key].size > 0), [runs, textFiltered, matchesFacets, facets]);
+
+  function changeFacet(key: Facet, next: Set<string>) {
+    setFacets((current) => ({ ...current, [key]: next }));
+    lastToggled.current = null;
+  }
+
+  const facetCount = FACETS.reduce((sum, { key }) => sum + facets[key].size, 0);
+  const filtersActive = Boolean(filter.trim()) || facetCount > 0;
 
   function toggle(accession: string, index: number, range: boolean) {
     // Read the anchor now: React may run the updater after lastToggled is reassigned below.
@@ -192,17 +198,15 @@ export function ExplorerPage() {
               </div>
             </div>
 
-            {runs.length ? <>
+            {runs.length ? <div className={facetSections.length ? 'lg:grid lg:grid-cols-[270px_minmax(0,1fr)] lg:items-start lg:gap-6' : ''}>
+              {facetSections.length ? <FilterSidebar sections={facetSections} selected={facets} active={facetCount} onChange={changeFacet} onReset={() => setFacets(noFacets())} /> : null}
+              <div className="min-w-0">
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <div className="relative min-w-[220px] flex-1 lg:max-w-sm">
                   <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter loaded runs (any field)" className="w-full rounded-xl border border-[#dce6eb] bg-white px-4 py-2 pr-8 text-sm outline-none focus:border-[#087f8c]" />
                   {filter ? <button onClick={() => setFilter('')} aria-label="Clear filter" className="absolute right-2 top-1/2 -translate-y-1/2 text-[#607286]"><X className="size-4" /></button> : null}
                 </div>
-                {FACETS.map(({ key, label }) => facetOptions[key].length > 1 || facets[key] ? <select key={key} value={facets[key]} onChange={(event) => { setFacets((current) => ({ ...current, [key]: event.target.value })); lastToggled.current = null; }} aria-label={`Filter by ${label}`} className={`max-w-[200px] rounded-xl border bg-white px-3 py-2 text-sm outline-none focus:border-[#087f8c] ${facets[key] ? 'border-[#087f8c] font-bold' : 'border-[#dce6eb]'}`}>
-                  <option value="">{label}: all</option>
-                  {facetOptions[key].map(([value, count]) => <option key={value} value={value}>{key === 'layout' ? layoutLabel(value) : value} ({count})</option>)}
-                </select> : null)}
-                {filtersActive ? <button onClick={() => { setFilter(''); setFacets({ organism: '', strategy: '', layout: '', platform: '' }); }} className="text-xs font-bold text-[#087f8c] hover:underline">Reset filters</button> : null}
+                {filtersActive ? <button onClick={() => { setFilter(''); setFacets(noFacets()); lastToggled.current = null; }} className="text-xs font-bold text-[#087f8c] hover:underline">Reset filters</button> : null}
                 <div className="ml-auto flex items-center gap-2">
                   {filtersActive ? <span className="text-xs text-[#607286]">{visibleRuns.length.toLocaleString()} shown</span> : null}
                   <button disabled={!selected.size} onClick={() => setSelected(new Set())} className="rounded-xl px-3 py-2 text-sm font-bold text-[#607286] hover:bg-white disabled:invisible">Clear selection</button>
@@ -211,7 +215,8 @@ export function ExplorerPage() {
               </div>
               <p className="mt-2 text-xs text-[#607286]">Click rows to select; Shift-click selects a range. Hover a run accession to copy it or open it in NCBI/ENA.</p>
               <RunTable runs={visibleRuns} selected={selected} saved={saved} sort={sort} onSort={onSort} onToggle={toggle} onToggleAll={toggleAllVisible} />
-            </> : !loading && !error ? <div className="mt-6 rounded-2xl border border-[#dce6eb] bg-white p-8 text-center">
+              </div>
+            </div> : !loading && !error ? <div className="mt-6 rounded-2xl border border-[#dce6eb] bg-white p-8 text-center">
               <div className="font-bold">No SRA records matched “{activeQuery}”.</div>
               <p className="mt-1 text-sm text-[#607286]">Check the accession, or try broader terms. Examples: {EXAMPLES.map((item, index) => <span key={item}>{index ? ', ' : ''}<button onClick={() => startSearch(item)} className="font-mono text-[#087f8c] hover:underline">{item}</button></span>)}</p>
             </div> : null}
@@ -261,9 +266,67 @@ function Intro({ query, onChange, onSubmit, onOpenCollection }: { query: string;
     </section>
     <section aria-labelledby="about-sra-explorer" className="mt-5 grid gap-3 lg:grid-cols-3">
       <h2 id="about-sra-explorer" className="sr-only">NCBI SRA search and sequencing file downloads</h2>
-      <article className="rounded-2xl border border-[#dce6eb] bg-white p-5"><h3 className="font-black">1. Search and filter</h3><p className="mt-2 text-sm leading-6 text-[#607286]">Search NCBI SRA by accession or keywords, then narrow the loaded runs by organism, library strategy, layout, or instrument.</p></article>
+      <article className="rounded-2xl border border-[#dce6eb] bg-white p-5"><h3 className="font-black">1. Search and filter</h3><p className="mt-2 text-sm leading-6 text-[#607286]">Search NCBI SRA by accession or keywords, then tick organisms, library strategies, layouts, or instruments in the sidebar to narrow the loaded runs.</p></article>
       <article className="rounded-2xl border border-[#dce6eb] bg-white p-5"><h3 className="font-black">2. Collect runs</h3><p className="mt-2 text-sm leading-6 text-[#607286]">Add runs to a collection that stays in this browser. Export or import it as JSON to continue elsewhere.</p></article>
       <article className="rounded-2xl border border-[#dce6eb] bg-white p-5"><h3 className="font-black">3. Download reproducibly</h3><p className="mt-2 text-sm leading-6 text-[#607286]">Generate one script for ENA FASTQ, normalized SRA, or Original submitted files (FAST5, POD5, BAM) with MD5 checks, plus metadata tables.</p></article>
     </section>
   </>;
+}
+
+const VALUES_SHOWN = 8;
+
+type FacetSection = { key: Facet; label: string; italic?: boolean; format?: (value: string) => string; counts: Array<[string, number]> };
+
+/** All result filters as tick boxes: a sticky sidebar on wide screens, a collapsible panel on phones. */
+function FilterSidebar({ sections, selected, active, onChange, onReset }: { sections: FacetSection[]; selected: Record<Facet, Set<string>>; active: number; onChange: (key: Facet, next: Set<string>) => void; onReset: () => void }) {
+  const lists = sections.map((section) => <FacetList key={section.key} section={section} selected={selected[section.key]} onChange={(next) => onChange(section.key, next)} />);
+  const header = <div className="flex items-center gap-2"><SlidersHorizontal className="size-4 text-[#087f8c]" /><span className="text-sm font-black">Filters</span>{active ? <span className="rounded-full bg-[#087f8c] px-1.5 text-[11px] font-bold text-white">{active}</span> : null}{active ? <button onClick={onReset} className="ml-auto text-xs font-bold text-[#087f8c] hover:underline">Reset all</button> : null}</div>;
+  return <aside aria-label="Filters" className="mt-4 lg:sticky lg:top-20">
+    <div className="hidden lg:block">
+      <div className="mb-2">{header}</div>
+      <div className="space-y-3 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto lg:pr-1">{lists}</div>
+    </div>
+    <details className="rounded-2xl border border-[#dce6eb] bg-white lg:hidden">
+      <summary className="cursor-pointer list-none px-4 py-3">{header}</summary>
+      <div className="space-y-3 border-t border-[#edf2f4] p-3">{lists}</div>
+    </details>
+  </aside>;
+}
+
+function FacetList({ section, selected, onChange }: { section: FacetSection; selected: Set<string>; onChange: (next: Set<string>) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [query, setQuery] = useState('');
+  const needle = query.trim().toLowerCase();
+  const show = (value: string) => (value ? section.format?.(value) ?? value : 'Unknown');
+  const matching = needle ? section.counts.filter(([value]) => show(value).toLowerCase().includes(needle)) : section.counts;
+  // Ticked values stay visible even when they fall outside the first few.
+  const listed = expanded || needle ? matching : matching.filter(([value], index) => index < VALUES_SHOWN || selected.has(value));
+  const toggle = (value: string) => {
+    const next = new Set(selected);
+    if (next.has(value)) next.delete(value); else next.add(value);
+    onChange(next);
+  };
+
+  return <section role="group" aria-label={`Filter by ${section.label}`} className="overflow-hidden rounded-2xl border border-[#dce6eb] bg-white">
+    <div className="flex items-center gap-2 border-b border-[#edf2f4] px-3 py-2">
+      <span className="text-[11px] font-extrabold uppercase tracking-[.1em] text-[#087f8c]">{section.label}</span>
+      {selected.size ? <button onClick={() => onChange(new Set())} className="ml-auto text-[11px] font-bold text-[#087f8c] hover:underline">Clear</button> : null}
+    </div>
+    {section.counts.length > VALUES_SHOWN ? <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Find ${section.label.toLowerCase()}`} aria-label={`Find ${section.label.toLowerCase()}`} className="w-full border-b border-[#edf2f4] px-3 py-1.5 text-sm outline-none" /> : null}
+    <ul className="py-1">
+      {listed.map(([value, count]) => {
+        const active = selected.has(value);
+        return <li key={value} className={`group flex items-center gap-2 px-3 py-1 text-sm ${active ? 'bg-[#e8f6f5]' : 'hover:bg-[#f2f6f8]'}`}>
+          <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+            <input type="checkbox" checked={active} onChange={() => toggle(value)} className="accent-[#087f8c]" />
+            <span className={`truncate ${section.italic && value ? 'italic' : ''} ${count ? '' : 'text-[#9ab0bc]'}`} title={show(value)}>{show(value)}</span>
+          </label>
+          <button onClick={() => onChange(new Set([value]))} title={`Show only ${show(value)}`} className="hidden text-[11px] font-bold text-[#087f8c] hover:underline group-hover:inline">only</button>
+          <span className="text-xs tabular-nums text-[#607286]">{count.toLocaleString()}</span>
+        </li>;
+      })}
+      {!listed.length ? <li className="px-3 py-1.5 text-xs text-[#9ab0bc]">Nothing matches “{query}”.</li> : null}
+    </ul>
+    {!needle && matching.length > VALUES_SHOWN ? <button onClick={() => setExpanded((value) => !value)} className="w-full border-t border-[#edf2f4] px-3 py-1.5 text-left text-xs font-bold text-[#087f8c] hover:bg-[#f2f6f8]">{expanded ? 'Show fewer' : `Show all ${matching.length}`}</button> : null}
+  </section>;
 }

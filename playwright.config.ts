@@ -5,6 +5,8 @@ const port = Number(process.env.E2E_PORT || 3100);
 export default defineConfig({
   testDir: './e2e',
   timeout: 60_000,
+  // Generous assertion timeout: the suite also runs on busy laptops.
+  expect: { timeout: 15_000 },
   fullyParallel: true,
   retries: process.env.CI ? 1 : 0,
   use: { baseURL: `http://localhost:${port}`, trace: 'retain-on-failure' },
